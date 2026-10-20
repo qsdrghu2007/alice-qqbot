@@ -1,0 +1,20 @@
+{
+  "name": "xiaoyu-qqbot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first QQ companion with a web console",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test",
+    "check": "node scripts/check.js",
+    "setup": "node scripts/setup.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

@@ -1,0 +1,1349 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#f5f7f2">
+    <title>Alice · 本地控制台</title>
+    <link rel="stylesheet" href="./styles.css">
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#mainContent">跳到主要内容</a>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="控制台侧栏">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <path d="M7.2 15.2c0-5 3.8-8.8 8.8-8.8s8.8 3.8 8.8 8.8c0 5.6-4.4 9.5-8.8 11.2-4.4-1.7-8.8-5.6-8.8-11.2Z"></path>
+              <path d="M4.5 11.5 9 13.7M27.5 11.5 23 13.7M12 15.6h.1M20 15.6h.1M13.5 20c1.6 1.1 3.4 1.1 5 0"></path>
+            </svg>
+          </span>
+          <span class="brand-copy">
+            <strong>Alice</strong>
+            <small>QQ 陪伴机器人</small>
+          </span>
+        </div>
+
+        <div class="badge-row">
+          <span class="badge badge-demo" id="demoBadge">本地演示</span>
+          <span class="badge badge-neutral" id="connectionBadge">未连接</span>
+        </div>
+
+        <section class="side-status" aria-labelledby="sideStatusTitle">
+          <div class="section-label-row">
+            <h2 id="sideStatusTitle">运行状态</h2>
+            <span class="tiny-status" id="statusFreshness">检查中</span>
+          </div>
+          <dl class="status-list" id="sidebarStatusList">
+            <div><dt>服务器</dt><dd id="sideServer">未连接</dd></div>
+            <div><dt>AI Key</dt><dd id="sideAi">未知</dd></div>
+            <div><dt>QQ 官方</dt><dd id="sideQq">未知</dd></div>
+            <div><dt>OneBot</dt><dd id="sideOnebot">未知</dd></div>
+            <div><dt>QQ 空间</dt><dd id="sideQzone">未知</dd></div>
+          </dl>
+        </section>
+
+        <label class="pause-row" for="pauseToggle">
+          <span>
+            <strong>全局暂停</strong>
+            <small id="pauseLabel">当前未知</small>
+          </span>
+          <span class="switch">
+            <input id="pauseToggle" type="checkbox" aria-label="全局暂停">
+            <span class="switch-track" aria-hidden="true"></span>
+          </span>
+        </label>
+
+        <nav class="primary-nav" aria-label="主导航">
+          <button class="nav-item is-active" type="button" data-view="chat" id="nav-chat" aria-controls="view-chat" aria-current="page" aria-label="聊天" title="聊天">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8l-5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"></path>
+              <path d="M7.5 11.5h.1M12 11.5h.1M16.5 11.5h.1"></path>
+            </svg>
+            <span>聊天</span>
+          </button>
+          <button class="nav-item" type="button" data-view="space" id="nav-space" aria-controls="view-space" aria-label="空间" title="空间">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.5"></circle>
+              <path d="M3.8 9h16.4M3.8 15h16.4M12 3.5c2.2 2.4 3.3 5.2 3.3 8.5s-1.1 6.1-3.3 8.5M12 3.5C9.8 5.9 8.7 8.7 8.7 12s1.1 6.1 3.3 8.5"></path>
+            </svg>
+            <span>空间</span>
+          </button>
+          <button class="nav-item" type="button" data-view="stickers" id="nav-stickers" aria-controls="view-stickers" aria-label="表情库" title="表情库">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="5" width="16" height="14" rx="2"></rect>
+              <path d="m5 16 4.5-4.5 3 3 2.5-2.5L19 16"></path>
+              <circle cx="9" cy="9" r="1.4"></circle>
+            </svg>
+            <span>表情库</span>
+          </button>
+          <button class="nav-item" type="button" data-view="memories" id="nav-memories" aria-controls="view-memories" aria-label="记忆" title="记忆">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6.5 4.5h11a2 2 0 0 1 2 2v13l-3.2-2-4.3 2-4.3-2-3.2 2v-13a2 2 0 0 1 2-2Z"></path>
+              <path d="M8.5 8.5h7M8.5 12h5"></path>
+            </svg>
+            <span>记忆</span>
+          </button>
+          <button class="nav-item" type="button" data-view="settings" id="nav-settings" aria-controls="view-settings" aria-label="设置" title="设置">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2 3.4-.1-.1a1.7 1.7 0 0 0-1.9-.2l-.9.5a1.7 1.7 0 0 0-.9 1.5v.2h-4v-.2a1.7 1.7 0 0 0-.9-1.5l-.9-.5a1.7 1.7 0 0 0-1.9.2l-.1.1-2-3.4.1-.1A1.7 1.7 0 0 0 4.6 15l-.2-1a1.7 1.7 0 0 0-1.2-1.2H3v-4h.2A1.7 1.7 0 0 0 4.4 7L4.6 6a1.7 1.7 0 0 0-.3-1.9L4.2 4l2-3.4.1.1A1.7 1.7 0 0 0 8.2 1l.9-.5A1.7 1.7 0 0 0 10 0v-.2h4v.2a1.7 1.7 0 0 0 .9 1.5l.9.5a1.7 1.7 0 0 0 1.9-.2l.1-.1 2 3.4-.1.1a1.7 1.7 0 0 0-.3 1.9l.2 1a1.7 1.7 0 0 0 1.2 1.2h.2v4h-.2a1.7 1.7 0 0 0-1.2 1.2Z"></path>
+            </svg>
+            <span>设置</span>
+          </button>
+          <button class="nav-item" type="button" data-view="diagnostics" id="nav-diagnostics" aria-controls="view-diagnostics" aria-label="诊断" title="诊断">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 12h4l2.2-5 4 10 2-5H21"></path>
+            </svg>
+            <span>诊断</span>
+          </button>
+        </nav>
+
+        <div class="side-footer">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="5" y="10" width="14" height="10" rx="2"></rect>
+            <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"></path>
+          </svg>
+          <span>仅在本机运行</span>
+        </div>
+      </aside>
+
+      <main class="main-column" id="mainContent" tabindex="-1">
+        <header class="topbar">
+          <div class="mobile-brand" aria-hidden="true">
+            <span class="brand-mark">
+              <svg viewBox="0 0 32 32">
+                <path d="M7.2 15.2c0-5 3.8-8.8 8.8-8.8s8.8 3.8 8.8 8.8c0 5.6-4.4 9.5-8.8 11.2-4.4-1.7-8.8-5.6-8.8-11.2Z"></path>
+                <path d="M12 15.6h.1M20 15.6h.1M13.5 20c1.6 1.1 3.4 1.1 5 0"></path>
+              </svg>
+            </span>
+          </div>
+          <div class="topbar-title">
+            <span>Alice控制台</span>
+            <h1 id="viewTitle">聊天</h1>
+          </div>
+          <div class="topbar-status">
+            <span class="badge badge-neutral" id="serverBadge">未连接</span>
+            <span class="badge badge-demo" id="mobileDemoBadge">本地演示</span>
+            <button class="icon-button mobile-pause-button" id="mobilePauseButton" type="button" aria-label="暂停机器人" title="暂停机器人">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 6v12M15 6v12"></path>
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="auth-notice" id="authNotice" role="status" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3.5 21 20H3L12 3.5Z"></path>
+            <path d="M12 9v5M12 17.2v.1"></path>
+          </svg>
+          <span id="authNoticeText">控制台 token 缺失、过期或无效，请使用服务端提供的新控制台链接。</span>
+        </div>
+
+        <div class="views" id="views">
+          <section class="view chat-view is-active" id="view-chat" data-tabpanel="chat" aria-labelledby="nav-chat">
+            <div class="view-heading chat-heading">
+              <div>
+                <div class="eyebrow">本地 owner 会话</div>
+                <h2>和Alice聊聊</h2>
+                <p>消息只会提交给这台机器上的控制台。</p>
+              </div>
+              <button class="icon-button" id="refreshChatButton" type="button" aria-label="刷新聊天状态" title="刷新聊天状态">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 7v5h-5M4 17v-5h5"></path>
+                  <path d="M6.1 8.2A7 7 0 0 1 18.7 9M17.9 15.8A7 7 0 0 1 5.3 15"></path>
+                </svg>
+              </button>
+            </div>
+
+            <div class="chat-surface">
+              <div class="message-list" id="chatMessages" role="log" aria-live="polite" aria-label="聊天消息"></div>
+              <div class="inline-error" id="chatError" role="alert" hidden></div>
+            </div>
+
+            <form class="composer" id="chatForm">
+              <div class="attachment-tray" id="chatAttachmentTray" hidden>
+                <div class="attachment-list" id="chatAttachments"></div>
+              </div>
+              <div class="attachment-entry">
+                <label for="chatImageUrl">图片地址</label>
+                <input id="chatImageUrl" type="url" inputmode="url" placeholder="https://..." autocomplete="off">
+                <button class="small-button" id="addImageButton" type="button" aria-label="添加聊天图片" title="添加聊天图片">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14"></path>
+                  </svg>
+                  添加
+                </button>
+              </div>
+              <textarea id="chatInput" rows="2" placeholder="写下你想说的话" aria-label="聊天内容"></textarea>
+              <div class="composer-footer">
+                <div class="composer-tools">
+                  <button class="icon-button tool-button" id="voiceInputButton" type="button" aria-label="浏览器语音输入" title="浏览器语音输入" hidden>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+                      <path d="M6 11.5a6 6 0 0 0 12 0M12 17.5V21M9 21h6"></path>
+                    </svg>
+                  </button>
+                  <button class="tool-button tool-button-wide" id="speakReplyButton" type="button" aria-label="朗读最近回复" title="朗读最近回复" hidden>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 10v4h3l5 4V6l-5 4H4Z"></path>
+                      <path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"></path>
+                    </svg>
+                    朗读回复
+                  </button>
+                  <span class="speech-note">仅本机浏览器，不是 QQ 语音</span>
+                </div>
+                <button class="primary-button send-button" id="sendChatButton" type="submit" aria-label="发送聊天消息" title="发送聊天消息">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m4 5 16 7-16 7 3-7-3-7Z"></path>
+                    <path d="M7 12h9"></path>
+                  </svg>
+                  发送
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section class="view" id="view-space" data-tabpanel="space" aria-labelledby="nav-space" hidden>
+            <div class="view-heading">
+              <div>
+                <div class="eyebrow">QQ 空间</div>
+                <h2>发布说说</h2>
+                <p>发布结果以 NapCat 返回的明确状态为准。</p>
+              </div>
+              <button class="secondary-button" id="qzoneLoginButton" type="button" aria-label="登录 QQ 空间" title="登录 QQ 空间">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5"></path>
+                  <path d="M10 8l4 4-4 4M14 12H4"></path>
+                </svg>
+                登录空间
+              </button>
+            </div>
+
+            <div class="space-grid">
+              <form class="form-panel" id="qzoneForm">
+                <label class="field">
+                  <span>正文</span>
+                  <textarea id="qzoneText" rows="6" maxlength="5000" placeholder="今天想分享什么"></textarea>
+                </label>
+                <label class="field">
+                  <span>图片地址</span>
+                  <textarea id="qzoneImages" rows="4" placeholder="每行一个 HTTPS 图片地址"></textarea>
+                  <small>每行一个，仅接受 HTTPS。</small>
+                </label>
+                <div class="form-row">
+                  <label class="field">
+                    <span>可见范围</span>
+                    <select id="qzoneVisibility">
+                      <option value="4" selected>好友</option>
+                      <option value="1">公开</option>
+                      <option value="64">自己</option>
+                    </select>
+                  </label>
+                  <label class="toggle-field" for="qzoneAutoPublishToggle">
+                    <span>
+                      <strong>允许空间发布</strong>
+                      <small>手动发布和模型发布共用</small>
+                    </span>
+                    <span class="switch">
+                      <input id="qzoneAutoPublishToggle" type="checkbox" aria-label="允许空间发布">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                </div>
+                <div class="action-row">
+                  <button class="primary-button" id="qzonePublishButton" type="submit" aria-label="提交空间发布" title="提交空间发布">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="m4 5 16 7-16 7 3-7-3-7Z"></path>
+                      <path d="M7 12h9"></path>
+                    </svg>
+                    提交发布
+                  </button>
+                </div>
+              </form>
+
+              <aside class="notice-panel" aria-label="空间发布说明">
+                <div class="notice-heading">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <path d="M12 11v5M12 7.8v.1"></path>
+                  </svg>
+                  <strong>发送边界</strong>
+                </div>
+                <p>使用 NapCat 4.18.18 或更高版本的原生扩展。当前仍需在真实账号上完成端到端验证。</p>
+                <p>“结果不明”或“重复请求”不会自动重发，以免产生重复说说。</p>
+                <p>此开关同时授权本页手动发布与模型工具发布；浏览器不会替你确认或补发。</p>
+                <div class="qzone-login-state" id="qzoneLoginState" hidden></div>
+              </aside>
+            </div>
+
+            <div class="result-panel" id="qzoneResult" role="status" hidden>
+              <div class="result-heading">
+                <span class="status-badge" id="qzoneResultBadge">未确认</span>
+                <strong id="qzoneResultTitle">尚无发布结果</strong>
+              </div>
+              <p id="qzoneResultText"></p>
+              <code id="qzoneResultRaw" hidden></code>
+            </div>
+          </section>
+
+          <section class="view" id="view-stickers" data-tabpanel="stickers" aria-labelledby="nav-stickers" hidden>
+            <div class="view-heading">
+              <div>
+                <div class="eyebrow">本地收藏</div>
+                <h2>表情库</h2>
+                <p>全局共享的本地图片和表情包，点击可预览。</p>
+              </div>
+              <button class="icon-button" id="refreshStickersButton" type="button" aria-label="刷新表情库" title="刷新表情库">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 7v5h-5M4 17v-5h5"></path>
+                  <path d="M6.1 8.2A7 7 0 0 1 18.7 9M17.9 15.8A7 7 0 0 1 5.3 15"></path>
+                </svg>
+              </button>
+            </div>
+
+            <div class="sticker-toolbar">
+              <div class="sticker-toolbar-main">
+                <input id="stickerSearch" type="search" placeholder="搜索总结或标签" autocomplete="off" aria-label="搜索表情">
+                <select id="stickerCategory" aria-label="筛选表情分类">
+                  <option value="all">全部分类</option>
+                  <option value="cute">可爱</option>
+                  <option value="interesting">有趣</option>
+                </select>
+              </div>
+              <button class="primary-button" id="openStickerUploadButton" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 17V5M7 10l5-5 5 5M5 20h14"></path>
+                </svg>
+                上传表情
+              </button>
+            </div>
+
+            <div class="sticker-summary-row">
+              <span id="stickerCount">已收藏 0 张</span>
+              <span id="stickerRejected" hidden></span>
+              <label class="toggle-field compact-toggle" for="stickerAutoCollectToggle">
+                <span>
+                  <strong>自动收藏</strong>
+                  <small>收到可爱表情时自动入库</small>
+                </span>
+                <span class="switch">
+                  <input id="stickerAutoCollectToggle" type="checkbox" aria-label="自动收藏">
+                  <span class="switch-track" aria-hidden="true"></span>
+                </span>
+              </label>
+              <label class="toggle-field compact-toggle" for="stickerEnabledToggle">
+                <span>
+                  <strong>启用表情库</strong>
+                  <small>关闭后不收藏也不发送</small>
+                </span>
+                <span class="switch">
+                  <input id="stickerEnabledToggle" type="checkbox" aria-label="启用表情库">
+                  <span class="switch-track" aria-hidden="true"></span>
+                </span>
+              </label>
+            </div>
+
+            <div class="inline-error" id="stickerError" role="alert" hidden></div>
+            <div class="sticker-grid" id="stickerGrid"></div>
+            <div id="stickerEmpty" hidden></div>
+          </section>
+
+          <section class="view" id="view-memories" data-tabpanel="memories" aria-labelledby="nav-memories" hidden>
+            <div class="view-heading">
+              <div>
+                <div class="eyebrow">自动 + 手动</div>
+                <h2>长期记忆</h2>
+                <p>私聊按账号隔离，群聊按群隔离。群聊记忆由群内成员共享。</p>
+              </div>
+              <button class="icon-button" id="refreshMemoriesButton" type="button" aria-label="刷新记忆" title="刷新记忆">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 7v5h-5M4 17v-5h5"></path>
+                  <path d="M6.1 8.2A7 7 0 0 1 18.7 9M17.9 15.8A7 7 0 0 1 5.3 15"></path>
+                </svg>
+              </button>
+            </div>
+
+            <div class="memory-toolbar">
+              <label class="field memory-scope-field">
+                <span>记忆范围</span>
+                <select id="memoryScope"></select>
+              </label>
+              <button class="secondary-button danger-button" id="clearMemoriesButton" type="button" aria-label="清空当前范围记忆" title="清空当前范围记忆">
+                清空当前范围
+              </button>
+            </div>
+            <p class="field-note" id="memoryScopeNote">加载中…</p>
+
+            <form class="memory-form" id="memoryForm">
+              <label for="memoryInput">新增记忆</label>
+              <div class="memory-entry">
+                <textarea id="memoryInput" rows="2" maxlength="2000" placeholder="写下一段值得保留的内容"></textarea>
+                <button class="primary-button" id="addMemoryButton" type="submit" aria-label="保存记忆" title="保存记忆">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14"></path>
+                  </svg>
+                  保存
+                </button>
+              </div>
+              <div class="memory-fields">
+                <label class="field">
+                  <span>类型</span>
+                  <select id="memoryType">
+                    <option value="fact">事实</option>
+                    <option value="preference">偏好</option>
+                    <option value="personal">个人</option>
+                    <option value="event">事件</option>
+                    <option value="emotion">情感</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>重要度（1–10）</span>
+                  <input id="memoryImportance" type="number" min="1" max="10" step="1" value="8" inputmode="numeric">
+                </label>
+              </div>
+            </form>
+            <div class="inline-error" id="memoryError" role="alert" hidden></div>
+            <div class="memory-summary" id="memoryMeta"></div>
+            <div class="memory-list" id="memoryList"></div>
+          </section>
+
+          <section class="view" id="view-settings" data-tabpanel="settings" aria-labelledby="nav-settings" hidden>
+            <div class="view-heading settings-heading">
+              <div>
+                <div class="eyebrow">本机配置</div>
+                <h2>设置</h2>
+                <p>密钥字段保持空白时，现有值不会改变。</p>
+              </div>
+              <button class="secondary-button" id="refreshConfigButton" type="button" aria-label="刷新设置" title="刷新设置">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 7v5h-5M4 17v-5h5"></path>
+                  <path d="M6.1 8.2A7 7 0 0 1 18.7 9M17.9 15.8A7 7 0 0 1 5.3 15"></path>
+                </svg>
+                刷新
+              </button>
+            </div>
+
+            <div class="inline-error" id="configError" role="alert" hidden></div>
+            <div class="reconnect-notice" id="reconnectNotice" role="status" hidden>
+              <span>传输配置已变更，需要重连才生效。</span>
+              <button class="small-button" id="reconnectAfterSaveButton" type="button" aria-label="立即重连" title="立即重连">立即重连</button>
+            </div>
+
+            <form id="configForm">
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="4"></circle><path d="M5 20a7 7 0 0 1 14 0"></path></svg>
+                  </span>
+                  人格
+                </legend>
+                <label class="field">
+                  <span>名称</span>
+                  <input id="personaName" name="personaName" type="text" autocomplete="off">
+                </label>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                  </span>
+                  AI 服务
+                </legend>
+                <div class="form-grid">
+                  <label class="field field-wide">
+                    <span>Base URL</span>
+                    <input id="aiBaseUrl" name="aiBaseUrl" type="url" spellcheck="false" autocomplete="off">
+                  </label>
+                  <label class="field">
+                    <span>API Key</span>
+                    <input id="aiApiKey" name="aiApiKey" type="password" placeholder="留空保持不变" autocomplete="new-password">
+                  </label>
+                  <label class="field">
+                    <span>模型</span>
+                    <input id="aiModel" name="aiModel" type="text" spellcheck="false" autocomplete="off">
+                  </label>
+                  <label class="field">
+                    <span>思考强度</span>
+                    <select id="aiReasoningEffort" name="aiReasoningEffort">
+                      <option value="low">low · 更快更省</option>
+                      <option value="high">high · 默认</option>
+                      <option value="max">max · 最强</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Temperature</span>
+                    <input id="aiTemperature" name="aiTemperature" type="number" min="0" max="2" step="0.1" inputmode="decimal">
+                  </label>
+                  <label class="field">
+                    <span>注入历史消息条数（0 = 全部保留）</span>
+                    <input id="aiHistoryMessages" name="aiHistoryMessages" type="number" min="0" max="1000" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field field-wide">
+                    <span>System Prompt</span>
+                    <textarea id="aiSystemPrompt" name="aiSystemPrompt" rows="5"></textarea>
+                  </label>
+                </div>
+                <p class="field-note">思考模式默认开启；low / high / max 控制推理强度。思考模式下 Temperature 不生效。历史消息只影响正常聊天上下文，填 0 表示注入当前保留的全部历史；当前每个会话最多保留 80 条。</p>
+                <label class="toggle-field compact-toggle" for="demoMode">
+                  <span>
+                    <strong>演示模式</strong>
+                    <small>关闭后才会使用真实 AI 并允许外发操作</small>
+                  </span>
+                  <span class="switch">
+                    <input id="demoMode" name="demoMode" type="checkbox" aria-label="演示模式">
+                    <span class="switch-track" aria-hidden="true"></span>
+                  </span>
+                </label>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.5 2.6 4 5.7 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.7-4-9s1.5-6.4 4-9Z"></path></svg>
+                  </span>
+                  联网搜索
+                </legend>
+                <div class="form-grid">
+                  <label class="toggle-field compact-toggle" for="webSearchEnabled">
+                    <span>
+                      <strong>启用联网搜索</strong>
+                      <small>总开关；关闭后 Search / Fetch 都不可用</small>
+                    </span>
+                    <span class="switch">
+                      <input id="webSearchEnabled" name="webSearchEnabled" type="checkbox" aria-label="启用联网搜索">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="webSearchSearchEnabled">
+                    <span>
+                      <strong>启用 Search</strong>
+                      <small>允许模型调用 web_search 搜索网页</small>
+                    </span>
+                    <span class="switch">
+                      <input id="webSearchSearchEnabled" name="webSearchSearchEnabled" type="checkbox" aria-label="启用 Search">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="webSearchFetchEnabled">
+                    <span>
+                      <strong>启用 Fetch</strong>
+                      <small>允许模型抓取 search 结果里的网页正文</small>
+                    </span>
+                    <span class="switch">
+                      <input id="webSearchFetchEnabled" name="webSearchFetchEnabled" type="checkbox" aria-label="启用 Fetch">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span>联网 API Key</span>
+                    <input id="webSearchApiKey" name="webSearchApiKey" type="password" autocomplete="off" placeholder="留空则复用 AI Key">
+                  </label>
+                  <label class="field">
+                    <span>每轮最多联网调用（1–10）</span>
+                    <input id="webSearchMaxCallsPerTurn" name="webSearchMaxCallsPerTurn" type="number" min="1" max="10" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>每次结果数（1–10）</span>
+                    <input id="webSearchMaxResults" name="webSearchMaxResults" type="number" min="1" max="10" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>单页正文上限（字符）</span>
+                    <input id="webSearchMaxContentChars" name="webSearchMaxContentChars" type="number" min="1000" max="20000" step="1000" inputmode="numeric">
+                  </label>
+                </div>
+                <p class="field-note">Search / Fetch 按成功请求计费，约 ¥5 / 1000 次；默认每轮最多 4 次联网、6 次工具调用。私聊由 AI 判断，群聊只有明确说“搜一下 / 查一下”才联网。搜索结果不会写入聊天记录。</p>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7"></path></svg>
+                  </span>
+                  工具调用
+                </legend>
+                <div class="form-grid">
+                  <label class="field">
+                    <span>每轮最多工具调用（1–10）</span>
+                    <input id="maxToolCallsPerTurn" name="maxToolCallsPerTurn" type="number" min="1" max="10" step="1" inputmode="numeric">
+                  </label>
+                </div>
+                <p class="field-note">默认最多 6 次工具调用，联网调用不能超过这个上限。修改后下一条消息生效。</p>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 1 7 7c0 2.2-1 3.8-2.2 5.1-.8.9-1.3 1.7-1.5 2.9H8.7c-.2-1.2-.7-2-1.5-2.9C6 13.8 5 12.2 5 10a7 7 0 0 1 7-7Z"></path><path d="M9 21h6M9 18h6"></path></svg>
+                  </span>
+                  长期记忆
+                </legend>
+                <div class="form-grid">
+                  <label class="toggle-field compact-toggle" for="memoryEnabled">
+                    <span>
+                      <strong>启用长期记忆</strong>
+                      <small>关闭后不再把记忆注入提示词</small>
+                    </span>
+                    <span class="switch">
+                      <input id="memoryEnabled" name="memoryEnabled" type="checkbox" aria-label="启用长期记忆">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="memoryAutoExtract">
+                    <span>
+                      <strong>自动提取</strong>
+                      <small>每条消息会额外调用一次低思考强度 AI 判断</small>
+                    </span>
+                    <span class="switch">
+                      <input id="memoryAutoExtract" name="memoryAutoExtract" type="checkbox" aria-label="自动提取长期记忆">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span>最低重要度</span>
+                    <input id="memoryMinImportance" name="memoryMinImportance" type="number" min="1" max="10" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>单库上限</span>
+                    <input id="memoryMaxPerKey" name="memoryMaxPerKey" type="number" min="1" max="500" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>注入条数</span>
+                    <input id="memoryMaxInjected" name="memoryMaxInjected" type="number" min="0" max="50" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>判断模型</span>
+                    <input id="memoryJudgeModel" name="memoryJudgeModel" type="text" placeholder="留空使用主模型" spellcheck="false" autocomplete="off">
+                  </label>
+                </div>
+                <p class="field-note">群聊记忆按群共享；私聊按账号隔离。自动提取失败不会影响正常回复。</p>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="m5 16 4.5-4.5 3 3 2.5-2.5L19 16"></path><circle cx="9" cy="9" r="1.4"></circle></svg>
+                  </span>
+                  表情库
+                </legend>
+                <div class="form-grid">
+                  <label class="toggle-field compact-toggle" for="stickerEnabled">
+                    <span>
+                      <strong>启用表情库</strong>
+                      <small>关闭后不收藏也不发送</small>
+                    </span>
+                    <span class="switch">
+                      <input id="stickerEnabled" name="stickerEnabled" type="checkbox" aria-label="启用表情库">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="stickerAutoCollect">
+                    <span>
+                      <strong>自动收藏</strong>
+                      <small>收到 OneBot 表情时自动审核并收藏</small>
+                    </span>
+                    <span class="switch">
+                      <input id="stickerAutoCollect" name="stickerAutoCollect" type="checkbox" aria-label="自动收藏表情">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span>图库上限（张）</span>
+                    <input id="stickerMaxItems" name="stickerMaxItems" type="number" min="1" max="10000" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>单张上限（MB）</span>
+                    <input id="stickerMaxFileSizeMb" name="stickerMaxFileSizeMb" type="number" min="0.001" max="8" step="0.5" inputmode="decimal">
+                  </label>
+                  <label class="field">
+                    <span>可爱阈值（0–1）</span>
+                    <input id="stickerMinCuteScore" name="stickerMinCuteScore" type="number" min="0" max="1" step="0.05" inputmode="decimal">
+                  </label>
+                  <label class="field">
+                    <span>有趣阈值（0–1）</span>
+                    <input id="stickerMinInterestingScore" name="stickerMinInterestingScore" type="number" min="0" max="1" step="0.05" inputmode="decimal">
+                  </label>
+                  <label class="field">
+                    <span>主动发表情间隔（分钟）</span>
+                    <input id="stickerProactiveCooldownMinutes" name="stickerProactiveCooldownMinutes" type="number" min="0" max="1440" step="1" inputmode="numeric">
+                  </label>
+                </div>
+                <p class="field-note">间隔只作为提示词软限制；用户发来表情包时优先回表情，不受此间隔限制。</p>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3 2"></path></svg>
+                  </span>
+                  输入前延迟
+                </legend>
+                <div class="form-grid">
+                  <label class="field">
+                    <span>输入前延迟（毫秒）</span>
+                    <input id="inputDelayMs" name="inputDelayMs" type="number" min="1" max="10000" step="100" inputmode="numeric">
+                  </label>
+                </div>
+                <p class="field-note">收到消息后先等待这么久，再合并连续消息并开始处理。它独立于打字延迟；修改后需重启 Alice 生效。</p>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3 2"></path></svg>
+                  </span>
+                  打字延迟
+                </legend>
+                <div class="form-grid">
+                  <label class="toggle-field compact-toggle" for="replyDelayEnabled">
+                    <span>
+                      <strong>启用打字延迟</strong>
+                      <small>仅 QQ / OneBot；网页本机聊天不等待</small>
+                    </span>
+                    <span class="switch">
+                      <input id="replyDelayEnabled" name="replyDelayEnabled" type="checkbox" aria-label="启用打字延迟">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="replyDelayTypingIndicator">
+                    <span>
+                      <strong>显示正在输入</strong>
+                      <small>仅 OneBot 私聊；群聊和官方 QQ 不支持</small>
+                    </span>
+                    <span class="switch">
+                      <input id="replyDelayTypingIndicator" name="replyDelayTypingIndicator" type="checkbox" aria-label="显示正在输入">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span>基础延迟（毫秒）</span>
+                    <input id="replyDelayBaseMs" name="replyDelayBaseMs" type="number" min="0" max="10000" step="50" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>每字增加（毫秒）</span>
+                    <input id="replyDelayMsPerChar" name="replyDelayMsPerChar" type="number" min="0" max="1000" step="5" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>最大延迟（毫秒，0 = 不限）</span>
+                    <input id="replyDelayMaxMs" name="replyDelayMaxMs" type="number" min="0" max="60000" step="100" inputmode="numeric">
+                  </label>
+                </div>
+                <p class="field-note">纯表情包不增加延迟；最大延迟填 0 表示不设上限。每个会话独立计时，短回复不会被其他会话的长回复拖住。</p>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 1 7 7c0 2.2-1 3.8-2.2 5.1-.8.9-1.3 1.7-1.5 2.9H8.7c-.2-1.2-.7-2-1.5-2.9C6 13.8 5 12.2 5 10a7 7 0 0 1 7-7Z"></path><path d="M9 21h6M9 18h6"></path></svg>
+                  </span>
+                  主动离开聊天
+                </legend>
+                <div class="form-grid">
+                  <label class="toggle-field compact-toggle" for="chatExitEnabled">
+                    <span>
+                      <strong>启用私聊结束判断</strong>
+                      <small>仅 QQ / OneBot 私聊；群聊不生效</small>
+                    </span>
+                    <span class="switch">
+                      <input id="chatExitEnabled" name="chatExitEnabled" type="checkbox" aria-label="启用私聊结束判断">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span>无回复终止（分钟）</span>
+                    <input id="chatExitIdleMinutes" name="chatExitIdleMinutes" type="number" min="1" max="1440" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>最低置信度（0–1）</span>
+                    <input id="chatExitMinConfidence" name="chatExitMinConfidence" type="number" min="0" max="1" step="0.05" inputmode="decimal">
+                  </label>
+                  <label class="field">
+                    <span>判断模型</span>
+                    <input id="chatExitJudgeModel" name="chatExitJudgeModel" type="text" placeholder="留空使用主模型" spellcheck="false" autocomplete="off">
+                  </label>
+                  <label class="field">
+                    <span>判断超时（毫秒）</span>
+                    <input id="chatExitJudgeTimeoutMs" name="chatExitJudgeTimeoutMs" type="number" min="1000" max="60000" step="1000" inputmode="numeric">
+                  </label>
+                </div>
+                <p class="field-note">判断为结束时只跳过当前文字回复；OneBot 私聊会尝试发一张应景表情包，官方 QQ 保持沉默。下一条消息会正常回复并清除终止时间。终止时间按私聊会话隔离。</p>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3 2"></path></svg>
+                  </span>
+                  主动回访
+                </legend>
+                <div class="form-grid">
+                  <label class="toggle-field compact-toggle" for="followUpEnabled">
+                    <span>
+                      <strong>启用主动回访</strong>
+                      <small>仅 OneBot 私聊；用户提前回复会取消</small>
+                    </span>
+                    <span class="switch">
+                      <input id="followUpEnabled" name="followUpEnabled" type="checkbox" aria-label="启用主动回访">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span>最短回访（分钟，至少 5）</span>
+                    <input id="followUpMinMinutes" name="followUpMinMinutes" type="number" min="5" max="10080" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>最长回访（分钟）</span>
+                    <input id="followUpMaxMinutes" name="followUpMaxMinutes" type="number" min="1" max="10080" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>安静时段开始（0–23）</span>
+                    <input id="followUpQuietStart" name="followUpQuietStart" type="number" min="0" max="23" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>安静时段结束（0–23）</span>
+                    <input id="followUpQuietEnd" name="followUpQuietEnd" type="number" min="0" max="23" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field field-wide">
+                    <span>时区</span>
+                    <input id="followUpTimezone" name="followUpTimezone" type="text" placeholder="Asia/Shanghai" spellcheck="false" autocomplete="off">
+                  </label>
+                  <label class="field">
+                    <span>失败重试间隔（分钟）</span>
+                    <input id="followUpRetryDelayMinutes" name="followUpRetryDelayMinutes" type="number" min="1" max="60" step="1" inputmode="numeric">
+                  </label>
+                </div>
+                <p class="field-note">每次终止只回访一次。AI 在 5 分钟到 24 小时内选择时机；不合法会立即让 AI 结合最近 20 条上下文重选，不使用默认值。夜间顺延，AI 请求失败则本次跳过。</p>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8l-5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"></path></svg>
+                  </span>
+                  QQ 官方机器人
+                </legend>
+                <div class="form-grid">
+                  <label class="field">
+                    <span>App ID</span>
+                    <input id="qqAppId" name="qqAppId" type="text" spellcheck="false" autocomplete="off">
+                  </label>
+                  <label class="field">
+                    <span>Secret</span>
+                    <input id="qqSecret" name="qqSecret" type="password" placeholder="留空保持不变" autocomplete="new-password">
+                  </label>
+                  <label class="toggle-field compact-toggle" for="qqEnabled">
+                    <span><strong>启用 QQ 官方连接</strong></span>
+                    <span class="switch">
+                      <input id="qqEnabled" name="qqEnabled" type="checkbox" aria-label="启用 QQ 官方连接">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="qqSandbox">
+                    <span><strong>沙箱环境</strong></span>
+                    <span class="switch">
+                      <input id="qqSandbox" name="qqSandbox" type="checkbox" aria-label="QQ 沙箱环境">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M8 8a4 4 0 0 1 8 0v8a4 4 0 0 1-8 0V8Z"></path><path d="M5 12h3M16 12h3M5 8h3M16 8h3M5 16h3M16 16h3"></path></svg>
+                  </span>
+                  OneBot
+                </legend>
+                <div class="form-grid">
+                  <label class="field field-wide">
+                    <span>WebSocket URL</span>
+                    <input id="onebotUrl" name="onebotUrl" type="url" spellcheck="false" autocomplete="off">
+                  </label>
+                  <label class="field">
+                    <span>Token</span>
+                    <input id="onebotToken" name="onebotToken" type="password" placeholder="留空保持不变" autocomplete="new-password">
+                  </label>
+                  <label class="toggle-field compact-toggle" for="onebotEnabled">
+                    <span><strong>启用 OneBot 连接</strong></span>
+                    <span class="switch">
+                      <input id="onebotEnabled" name="onebotEnabled" type="checkbox" aria-label="启用 OneBot 连接">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M12 3 4.5 6.5v5c0 4.5 3.1 8 7.5 9.5 4.4-1.5 7.5-5 7.5-9.5v-5L12 3Z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                  </span>
+                  行为策略
+                </legend>
+                <div class="form-grid">
+                  <label class="toggle-field compact-toggle" for="policyAutoActions">
+                    <span><strong>允许自动行动</strong></span>
+                    <span class="switch">
+                      <input id="policyAutoActions" name="policyAutoActions" type="checkbox" aria-label="允许自动行动">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="policyPaused">
+                    <span><strong>暂停机器人</strong></span>
+                    <span class="switch">
+                      <input id="policyPaused" name="policyPaused" type="checkbox" aria-label="暂停机器人">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span>允许的用户</span>
+                    <textarea id="policyAllowedUsers" name="policyAllowedUsers" rows="3" placeholder="QQ 号，用逗号或换行分隔"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>允许的群</span>
+                    <textarea id="policyAllowedGroups" name="policyAllowedGroups" rows="3" placeholder="群号，用逗号或换行分隔"></textarea>
+                  </label>
+                  <label class="field field-wide">
+                    <span>允许执行动作的用户</span>
+                    <textarea id="policyActionUsers" name="policyActionUsers" rows="3" placeholder="QQ 号，用逗号或换行分隔"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>冷却时间（毫秒）</span>
+                    <input id="policyCooldownMs" name="policyCooldownMs" type="number" min="0" step="100" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>每小时动作上限</span>
+                    <input id="policyMaxActionsPerHour" name="policyMaxActionsPerHour" type="number" min="0" step="1" inputmode="numeric">
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.8 9h16.4M3.8 15h16.4M12 3.5c2.2 2.4 3.3 5.2 3.3 8.5s-1.1 6.1-3.3 8.5"></path></svg>
+                  </span>
+                  QQ 空间
+                </legend>
+                <div class="form-grid">
+                  <label class="toggle-field compact-toggle" for="qzoneEnabled">
+                    <span><strong>启用空间能力</strong></span>
+                    <span class="switch">
+                      <input id="qzoneEnabled" name="qzoneEnabled" type="checkbox" aria-label="启用空间能力">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="settingsQzoneAutoPublish">
+                    <span><strong>允许空间发布</strong></span>
+                    <span class="switch">
+                      <input id="settingsQzoneAutoPublish" name="settingsQzoneAutoPublish" type="checkbox" aria-label="允许空间发布">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="qzoneHeadless">
+                    <span>
+                      <strong>Headless（历史字段）</strong>
+                      <small>当前版本不读取此开关；空间发布始终通过 NapCat</small>
+                    </span>
+                    <span class="switch">
+                      <input id="qzoneHeadless" name="qzoneHeadless" type="checkbox" aria-label="QQ 空间 Headless">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M8 10h8M8 14h5"></path></svg>
+                  </span>
+                  空间评论
+                </legend>
+                <div class="form-grid">
+                  <label class="toggle-field compact-toggle" for="qzoneCommentsEnabled">
+                    <span>
+                      <strong>启用空间评论回复</strong>
+                      <small>自己的说说有人评论时回复；别人 @ 并带空间链接时评论一次</small>
+                    </span>
+                    <span class="switch">
+                      <input id="qzoneCommentsEnabled" name="qzoneCommentsEnabled" type="checkbox" aria-label="启用空间评论回复">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="qzoneCommentsDryRun">
+                    <span>
+                      <strong>只检测不回复</strong>
+                      <small>先观察识别结果，不向 QQ 空间发送评论</small>
+                    </span>
+                    <span class="switch">
+                      <input id="qzoneCommentsDryRun" name="qzoneCommentsDryRun" type="checkbox" aria-label="只检测不回复">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="qzoneCommentsOnlyFriends">
+                    <span>
+                      <strong>只回复好友</strong>
+                      <small>额外允许名单不受此限制</small>
+                    </span>
+                    <span class="switch">
+                      <input id="qzoneCommentsOnlyFriends" name="qzoneCommentsOnlyFriends" type="checkbox" aria-label="只回复好友">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="qzoneCommentsAiDecide">
+                    <span>
+                      <strong>AI 可决定不回复</strong>
+                      <small>AI 输出 [不回复] 时跳过</small>
+                    </span>
+                    <span class="switch">
+                      <input id="qzoneCommentsAiDecide" name="qzoneCommentsAiDecide" type="checkbox" aria-label="AI 可决定不回复">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="qzoneCommentsNestedReplyFallback">
+                    <span>
+                      <strong>楼中楼失败时回退</strong>
+                      <small>直发失败后改回线程回复，可能出现在线程末尾</small>
+                    </span>
+                    <span class="switch">
+                      <input id="qzoneCommentsNestedReplyFallback" name="qzoneCommentsNestedReplyFallback" type="checkbox" aria-label="楼中楼失败时回退">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span>空闲轮询间隔（分钟）</span>
+                    <input id="qzoneCommentsPollMinutes" name="qzoneCommentsPollMinutes" type="number" min="2" max="60" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>活跃轮询间隔（分钟）</span>
+                    <input id="qzoneCommentsActivePollMinutes" name="qzoneCommentsActivePollMinutes" type="number" min="1" max="30" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>活跃窗口（分钟）</span>
+                    <input id="qzoneCommentsActiveWindowMinutes" name="qzoneCommentsActiveWindowMinutes" type="number" min="5" max="1440" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>轮询抖动（%）</span>
+                    <input id="qzoneCommentsPollJitterPercent" name="qzoneCommentsPollJitterPercent" type="number" min="0" max="50" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>Cookie 刷新间隔（分钟）</span>
+                    <input id="qzoneCommentsCookieRefreshMinutes" name="qzoneCommentsCookieRefreshMinutes" type="number" min="5" max="60" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>自己说说跟踪（小时，0=无限）</span>
+                    <input id="qzoneCommentsOwnTrackHours" name="qzoneCommentsOwnTrackHours" type="number" min="0" max="168" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>外部说说跟踪（小时，0=无限）</span>
+                    <input id="qzoneCommentsExternalTrackHours" name="qzoneCommentsExternalTrackHours" type="number" min="0" max="168" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>每轮最多回复（0=无限）</span>
+                    <input id="qzoneCommentsMaxRepliesPerCycle" name="qzoneCommentsMaxRepliesPerCycle" type="number" min="0" max="10" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>每小时最多回复（0=无限）</span>
+                    <input id="qzoneCommentsMaxRepliesPerHour" name="qzoneCommentsMaxRepliesPerHour" type="number" min="0" max="30" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>最短延迟（秒）</span>
+                    <input id="qzoneCommentsDelayMinSeconds" name="qzoneCommentsDelayMinSeconds" type="number" min="0" max="120" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>最长延迟（秒）</span>
+                    <input id="qzoneCommentsDelayMaxSeconds" name="qzoneCommentsDelayMaxSeconds" type="number" min="0" max="120" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>回复最长字数</span>
+                    <input id="qzoneCommentsMaxReplyChars" name="qzoneCommentsMaxReplyChars" type="number" min="10" max="200" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field field-wide">
+                    <span>额外允许用户（QQ 号，逗号或换行）</span>
+                    <textarea id="qzoneCommentsAllowedUsers" name="qzoneCommentsAllowedUsers" rows="2" placeholder="123456789, 987654321"></textarea>
+                  </label>
+                  <label class="field field-wide">
+                    <span>黑名单用户（QQ 号，逗号或换行）</span>
+                    <textarea id="qzoneCommentsBlockedUsers" name="qzoneCommentsBlockedUsers" rows="2" placeholder="不回这些人的评论"></textarea>
+                  </label>
+                  <label class="field field-wide">
+                    <span>自定义回复提示词（留空用默认）</span>
+                    <textarea id="qzoneCommentsReplyPrompt" name="qzoneCommentsReplyPrompt" rows="4" placeholder="可用 {post}、{name}、{comment}"></textarea>
+                  </label>
+                </div>
+                <p class="field-note">QQ 空间没有新评论推送接口，只能轮询。发布说说、发现新说说或回复评论后会进入活跃窗口：按活跃间隔检查，之后间隔逐级翻倍，直到空闲间隔；轮询抖动会在此基础上随机浮动。跟踪时长和回复上限填 0 表示不限，但仍受好友、名单、暂停和 dryRun 约束。楼中楼优先直接回复目标；开启“楼中楼失败时回退”后，直发失败会改回线程末尾回复。需要从 NapCat 读取 user.qzone.qq.com 的 Cookie，只在内存使用，不写日志或状态文件。空间接口不是官方公开 API，可能触发风控；建议先开启“只检测不回复”。</p>
+                <div class="inline-error" id="qzoneCommentsError" role="alert" hidden></div>
+                <div class="action-row">
+                  <span class="save-state" id="qzoneCommentsStatus">未检查</span>
+                  <button class="secondary-button" id="qzoneCommentsPollButton" type="button">立即检查</button>
+                </div>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3 2"></path></svg>
+                  </span>
+                  定时空间
+                </legend>
+                <div class="form-grid">
+                  <label class="toggle-field compact-toggle" for="autonomyEnabled">
+                    <span>
+                      <strong>启用定时任务</strong>
+                      <small>仍需 AI Key、空间启用和允许空间发布均满足</small>
+                    </span>
+                    <span class="switch">
+                      <input id="autonomyEnabled" name="autonomyEnabled" type="checkbox" aria-label="启用定时发空间">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span>间隔（分钟）</span>
+                    <input id="autonomyIntervalMinutes" name="autonomyIntervalMinutes" type="number" min="60" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field field-wide">
+                    <span>提示词</span>
+                    <textarea id="autonomyPrompt" name="autonomyPrompt" rows="4" placeholder="用于生成空间内容的提示"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>安静时段开始（0–23）</span>
+                    <input id="autonomyQuietStart" name="autonomyQuietStart" type="number" min="0" max="23" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>安静时段结束（0–23）</span>
+                    <input id="autonomyQuietEnd" name="autonomyQuietEnd" type="number" min="0" max="23" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field field-wide">
+                    <span>时区</span>
+                    <input id="autonomyTimezone" name="autonomyTimezone" type="text" placeholder="Asia/Shanghai" autocomplete="off" spellcheck="false">
+                  </label>
+                </div>
+                <p class="field-note">依赖 AI Key、空间启用及空间发布授权；真实账号端到端验证尚未完成。</p>
+              </fieldset>
+
+              <div class="settings-actions">
+                <span class="save-state" id="configSaveState"></span>
+                <button class="primary-button" id="saveConfigButton" type="submit" aria-label="保存设置" title="保存设置">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 4h12l2 2v14H5V4Z"></path>
+                    <path d="M8 4v6h8V4M8 20v-6h8v6"></path>
+                  </svg>
+                  保存设置
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section class="view" id="view-diagnostics" data-tabpanel="diagnostics" aria-labelledby="nav-diagnostics" hidden>
+            <div class="view-heading">
+              <div>
+                <div class="eyebrow">只读检查</div>
+                <h2>诊断</h2>
+                <p>这里显示控制台实际返回的服务和数据状态。</p>
+              </div>
+              <button class="secondary-button" id="refreshStatusButton" type="button" aria-label="刷新诊断状态" title="刷新诊断状态">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 7v5h-5M4 17v-5h5"></path>
+                  <path d="M6.1 8.2A7 7 0 0 1 18.7 9M17.9 15.8A7 7 0 0 1 5.3 15"></path>
+                </svg>
+                刷新状态
+              </button>
+            </div>
+
+            <div class="diagnostic-grid" id="diagnosticGrid">
+              <div class="diagnostic-item">
+                <span>服务器</span>
+                <strong id="diagServer">未连接</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span>AI Key</span>
+                <strong id="diagAi">未知</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span>QQ 官方</span>
+                <strong id="diagQq">未知</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span>OneBot</span>
+                <strong id="diagOnebot">未知</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span>QQ 空间</span>
+                <strong id="diagQzone">未知</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span>暂停</span>
+                <strong id="diagPause">未知</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span>运行模式</span>
+                <strong id="diagDemo">本地演示</strong>
+              </div>
+            </div>
+
+            <section class="autonomy-panel" aria-labelledby="autonomyStatusTitle">
+              <div class="autonomy-heading">
+                <div>
+                  <span class="eyebrow">status.autonomy</span>
+                  <h3 id="autonomyStatusTitle">定时发空间</h3>
+                </div>
+                <span class="badge badge-neutral">结果以服务端为准</span>
+              </div>
+              <dl class="autonomy-details">
+                <div>
+                  <dt>下次时间</dt>
+                  <dd id="autonomyNextAt">未返回</dd>
+                </div>
+                <div>
+                  <dt>上次状态</dt>
+                  <dd id="autonomyLastStatus">未返回</dd>
+                </div>
+                <div>
+                  <dt>上次错误</dt>
+                  <dd id="autonomyLastError">未返回</dd>
+                </div>
+              </dl>
+              <p>仅在 AI Key、空间启用和空间发布授权均满足时运行。真实账号端到端验证尚未完成，展示的状态不保证发布已经成功。</p>
+            </section>
+
+            <div class="diagnostic-actions">
+              <button class="secondary-button" id="reconnectButton" type="button" aria-label="重连适配器" title="重连适配器">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 7v5h-5M4 17v-5h5"></path>
+                  <path d="M6.1 8.2A7 7 0 0 1 18.7 9M17.9 15.8A7 7 0 0 1 5.3 15"></path>
+                </svg>
+                重连适配器
+              </button>
+              <button class="secondary-button" id="exportButton" type="button" aria-label="导出本地数据" title="导出本地数据">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3v12M7 10l5 5 5-5M5 20h14"></path>
+                </svg>
+                导出数据
+              </button>
+              <button class="secondary-button" id="backupButton" type="button" aria-label="创建本地备份" title="创建本地备份">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 4h12l2 2v14H5V4Z"></path>
+                  <path d="M8 4v6h8V4M8 20v-6h8v6"></path>
+                </svg>
+                创建备份
+              </button>
+              <label class="file-button" for="importFile">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 17V5M7 10l5-5 5 5M5 20h14"></path>
+                </svg>
+                导入 JSON
+                <input id="importFile" type="file" accept=".json,application/json">
+              </label>
+            </div>
+
+            <div class="inline-error" id="diagnosticError" role="alert" hidden></div>
+            <div class="operation-result" id="diagnosticResult" role="status" hidden></div>
+          </section>
+        </div>
+
+        <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
+      </main>
+
+      <aside class="context-rail" aria-label="运行概览">
+        <div class="rail-heading">
+          <span class="eyebrow">运行概览</span>
+          <h2>本机控制台</h2>
+        </div>
+        <dl class="context-status" id="contextStatusList">
+          <div><dt><span class="dot" aria-hidden="true"></span>服务器</dt><dd id="contextServer">未连接</dd></div>
+          <div><dt><span class="dot" aria-hidden="true"></span>AI Key</dt><dd id="contextAi">未知</dd></div>
+          <div><dt><span class="dot" aria-hidden="true"></span>QQ 官方</dt><dd id="contextQq">未知</dd></div>
+          <div><dt><span class="dot" aria-hidden="true"></span>OneBot</dt><dd id="contextOnebot">未知</dd></div>
+          <div><dt><span class="dot" aria-hidden="true"></span>QQ 空间</dt><dd id="contextQzone">未知</dd></div>
+        </dl>
+        <div class="rail-block">
+          <span>会话归属</span>
+          <strong>本机 owner</strong>
+          <small>固定的本地聊天与记忆范围</small>
+        </div>
+        <div class="rail-block rail-block-accent">
+          <span>当前提醒</span>
+          <strong id="railReminder">等待读取状态</strong>
+          <small>页面不会根据请求成功推断 QQ 已连接。</small>
+        </div>
+      </aside>
+    </div>
+
+    <dialog class="sticker-dialog" id="stickerUploadDialog" aria-labelledby="stickerUploadTitle">
+      <form class="sticker-dialog-body" id="stickerUploadForm">
+        <div class="sticker-dialog-heading">
+          <div>
+            <span class="eyebrow">本地文件</span>
+            <h2 id="stickerUploadTitle">上传表情</h2>
+          </div>
+          <button class="icon-button" id="closeStickerUploadButton" type="button" aria-label="关闭上传" title="关闭上传">×</button>
+        </div>
+        <label class="field">
+          <span>图片文件</span>
+          <input id="stickerUploadFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+        </label>
+        <label class="field">
+          <span>总结</span>
+          <input id="stickerUploadSummary" type="text" maxlength="240" placeholder="一句话描述这张表情">
+        </label>
+        <label class="field">
+          <span>标签</span>
+          <input id="stickerUploadTags" type="text" maxlength="180" required placeholder="自己填写，逗号分隔，如 可爱,猫猫,无语">
+        </label>
+        <label class="field">
+          <span>分类</span>
+          <select id="stickerUploadCategory">
+            <option value="cute">可爱</option>
+            <option value="interesting">有趣</option>
+          </select>
+        </label>
+        <p class="field-note">标签由你手动填写，最多 8 个；手动上传不会经过 AI 审核，会直接加入全局表情库。</p>
+        <div class="inline-error" id="stickerUploadError" role="alert" hidden></div>
+        <div class="sticker-dialog-actions">
+          <button class="secondary-button" id="cancelStickerUploadButton" type="button">取消</button>
+          <button class="primary-button" id="stickerUploadSubmit" type="submit">上传</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="sticker-dialog sticker-preview-dialog" id="stickerPreviewDialog" aria-labelledby="stickerPreviewSummary">
+      <div class="sticker-dialog-body">
+        <div class="sticker-dialog-heading">
+          <div>
+            <span class="eyebrow">表情预览</span>
+            <h2 id="stickerPreviewSummary">表情</h2>
+          </div>
+          <button class="icon-button" id="closeStickerPreviewButton" type="button" aria-label="关闭预览" title="关闭预览">×</button>
+        </div>
+        <div class="sticker-preview-frame">
+          <img id="stickerPreviewImage" alt="表情预览">
+        </div>
+        <p class="sticker-preview-meta" id="stickerPreviewMeta"></p>
+        <div class="sticker-preview-tags" id="stickerPreviewTags"></div>
+        <div class="sticker-tag-editor" id="stickerTagEditor" hidden>
+          <label class="field">
+            <span>修改标签</span>
+            <input id="stickerTagEditorInput" type="text" maxlength="180" placeholder="逗号分隔，最多 8 个">
+          </label>
+          <p class="field-note">标签会直接用于 Alice 挑选表情，保存后立即生效。</p>
+          <div class="inline-error" id="stickerTagEditorError" role="alert" hidden></div>
+          <div class="sticker-dialog-actions">
+            <button class="secondary-button" id="cancelStickerTagsButton" type="button">取消</button>
+            <button class="primary-button" id="saveStickerTagsButton" type="button">保存标签</button>
+          </div>
+        </div>
+        <div class="sticker-dialog-actions">
+          <button class="secondary-button" id="editStickerTagsButton" type="button">编辑标签</button>
+          <button class="secondary-button" id="deleteStickerFromPreviewButton" type="button">删除这张表情</button>
+        </div>
+      </div>
+    </dialog>
+  </body>
+</html>
