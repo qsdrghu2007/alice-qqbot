@@ -6,7 +6,7 @@ Alice 自己启动的 HTTP 服务只监听 `127.0.0.1`，默认不开放到局�
 
 ## 目录
 
-- [快速开始](#快速开始)
+- [安装与启动](#安装与启动)
 - [首次配置清单](#首次配置清单)
 - [控制台页面](#控制台页面)
 - [配置](#配置)
@@ -44,12 +44,88 @@ Alice 自己启动的 HTTP 服务只监听 `127.0.0.1`，默认不开放到局�
 - 使用个人号路线时，需要安装并登录 NapCatQQ；QQ 空间发布要求 NapCat `>= 4.18.18`。
 - 需要 AI 回复时，在设置中填写兼容 OpenAI Chat Completions 的 Base URL、API Key 和模型名。当前默认模型是 `deepseek-flash`。
 
-## 快速启动
-先双击onebot再双击start
+## 安装与启动
 
-令牌只在启动终端出现一次。网页会把令牌保存到当前标签页的 `sessionStorage`，并把它从地址栏移除；关闭标签后，从启动终端复制原链接重新打开即可。只有终端已关闭或令牌丢失时，才需要重启 Alice 生成新链接。
+### 1. 准备环境
 
-Windows 可双击根目录的 `stop-alice.bat` 一键关闭 Alice；脚本会读取 `data/config.json` 的端口，只结束监听该端口的 Node 进程。使用 `--no-web` 时没有监听端口，脚本无法定位进程，需要在启动终端按 `Ctrl+C` 或按 PID 结束。
+- Node.js 22 或更高版本。
+- Windows 或 macOS。
+- 使用个人 QQ 时，需要安装并登录 NapCatQQ；QQ 空间发布要求 NapCat `>= 4.18.18`。
+- 下载源码：从 [最新 Release](https://github.com/qsdrghu2007/alice-qqbot/releases/latest) 下载 source zip，或执行：
+
+```bash
+git clone https://github.com/qsdrghu2007/alice-qqbot.git
+cd alice-qqbot
+```
+
+安装 Node.js 后，先在终端确认环境：
+
+```bash
+node -v
+npm -v
+```
+
+两条命令都能输出版本号即可。Node.js 版本必须不低于 22。
+
+### 2. 安装依赖
+
+在包含 `package.json` 的项目根目录执行：
+
+```bash
+npm install
+```
+
+首次部署或需要严格按 `package-lock.json` 安装时，也可以使用：
+
+```bash
+npm ci
+```
+
+项目没有构建步骤，运行依赖只有 `ws`。如果下载依赖很慢，可以先配置 npm 镜像，再重新执行安装。
+
+### 3. 手动启动
+
+```bash
+npm start
+```
+
+启动后终端会打印带随机令牌的地址，例如：
+
+```text
+http://127.0.0.1:3210/#token=...
+```
+
+在浏览器打开这个地址即可。令牌只在启动终端出现一次；网页会把它保存到当前标签页的 `sessionStorage`，并从地址栏移除。关闭标签后，从启动终端复制原链接重新打开即可。只有终端已关闭或令牌丢失时，才需要重启 Alice 生成新链接。
+
+首次启动默认是演示模式，不会调用真实 AI。填写 API Key 后还需要按 [首次配置清单](#首次配置清单) 关闭演示模式并启用需要的通道。
+
+### 4. Windows 一键启动
+
+使用个人 QQ（OneBot/NapCat）时：
+
+1. 双击 `start-onebot.bat` 启动项目内的 NapCat。
+2. 双击 `start.bat` 启动 Alice；首次运行会自动执行 `npm install`。
+3. 在 NapCat 控制台登录 QQ，必要时打开 NapCat WebUI 扫码。WebUI 默认端口是 `6099`，实际监听地址以 `webui.json` 为准。
+4. 使用终端打印的控制台链接打开网页。
+5. 在设置页启用 OneBot，确认地址为 `ws://127.0.0.1:3001`，令牌与 NapCat 一致，保存后点“立即重连”。
+
+只使用网页本机聊天或官方 QQ 时，可以跳过 `start-onebot.bat`，直接双击 `start.bat`。
+
+### 5. macOS 启动
+
+双击 `start.command` 只会启动 Alice，不会启动 NapCat。使用个人 QQ 时，需要另行安装并启动 NapCat，再把 OneBot WebSocket 地址和令牌配置到设置页。
+
+如果 macOS 提示没有执行权限，在项目目录执行：
+
+```bash
+chmod +x start.command
+```
+
+### 停止 Alice
+
+- Windows：双击 `stop-alice.bat`，或在启动终端按 `Ctrl+C`。
+- macOS：在启动终端按 `Ctrl+C`。
+- `stop-alice` 依赖控制台端口；使用 `--no-web` 时没有监听端口，需要在启动终端按 `Ctrl+C` 或按 PID 结束进程。
 
 ### 只运行 OneBot，关闭 Web
 
@@ -72,19 +148,6 @@ $env:ALICE_DISABLE_WEB="1"; npm start
 ```
 
 此时不会再监听 `127.0.0.1:3210`，也不会打印控制台链接。要重新打开网页，去掉 `--no-web` / 环境变量后重启 Alice。
-
-### Windows 双击启动
-
-1. 先双击 `start-onebot.bat` 启动项目内的 NapCat。
-2. 再双击 `start.bat` 启动 Alice。
-3. 在 NapCat 控制台完成 QQ 登录，必要时打开 NapCat WebUI 扫码。WebUI 默认端口是 `6099`，实际监听地址以 `webui.json` 为准。
-4. 使用终端打印的控制台链接打开网页。
-
-首次运行 `start.bat` 会自动执行 `npm install`。
-
-### macOS
-
-双击 `start.command` 只会启动 Alice，不会启动 NapCat。macOS 需要另行安装并启动 NapCat，再把 OneBot WebSocket 地址和令牌配置到设置页。
 
 ### 检查与测试
 
