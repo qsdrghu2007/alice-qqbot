@@ -224,8 +224,7 @@ function randomBetween(min, max) {
 
 function sleep(ms) {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, Math.max(0, ms));
-    timer.unref?.();
+    setTimeout(resolve, Math.max(0, ms));
   });
 }
 
