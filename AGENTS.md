@@ -33,20 +33,23 @@ Windows 启动顺序：先 `start-onebot.bat`，再 `start.bat`。控制台令�
 ## 当前关键事实
 
 - 人格：Alice。
+- 稳定人格状态：`persona.preferences/opinions`（各最多 8 条）写入静态 system，作为 Alice 自己的喜好和观点；用户偏好/边界另存于安全跨场景画像。
 - 默认模型：`deepseek-flash`。
 - 思考强度：`ai.reasoningEffort`，可选 `low` / `high` / `max`，网页可切换。
 - 回复风格：`src/engine.js` 末尾的 `STYLE_CONTRACT` 强制短回复；基础人格在 `ai.systemPrompt`。直接注入的历史条数由 `ai.historyMessages` 控制，默认 30，0 表示注入当前保留的全部历史；仍提示模型不要模仿旧风格。
-- 上下文顺序：静态系统提示词 → 最近历史 → 最后一条 user（动态记忆/表情状态 + 当前用户文本）；动态状态不要放回系统前缀。
+- 上下文顺序：静态系统提示词 → 可选的每日用户画像 system → 最近历史 → 最后一条 user（动态记忆/表情状态 + 当前用户文本）；画像每天才更新，其余动态状态不要放回系统前缀。
+- 场景长度：`src/style.js` 的 `STYLE_CONTRACT` 按寒暄、倾诉、知识/步骤和收尾分档；这是模型行为约束，静态测试只能验证提示词没有丢失，不能保证每次生成都严格满足。
 - 打字延迟：`src/delivery.js`；仅 QQ/OneBot，按字数计时，纯表情包跳过，不同会话独立队列。
 - 延迟配置：`replyDelay.enabled/typingIndicator/baseMs/msPerChar/maxMs/jitter`，设置页可调基础延迟、每字延迟、最大延迟和“正在输入”开关。
-- 连续消息合并：`src/message-batcher.js`；仅 OneBot/官方 QQ，按会话+发送者合并，最后一条消息后等待 `inputDelayMs`（默认 2000ms）再开始 typing；单条也等待；网页本机不合并。`policy.cooldownMs` 只限制外发，不得丢弃入站消息。`inputDelayMs` 独立于 `replyDelay`，修改后需重启 Alice。
+- 连续消息合并：`src/message-batcher.js`；仅 OneBot/官方 QQ，按会话+发送者合并，最后一条消息后等待 `inputDelayMs`（默认 2000ms）再开始 typing；明显未完句会追加有界语义等待。生成期明确 ACK 作为补充保留，实质新消息打断并重新合并；网页本机不合并。`policy.cooldownMs` 只限制外发，不得丢弃入站消息。
+- 分段发送：`src/index.js` 的 `createReplyFlow()` + `src/delivery.js`；仅 QQ/OneBot 纯文本，最多两段并带随机停顿。代码、URL、结构化输出、动作结果、图片或表情不拆分；`replyDelay.enabled=false` 时关闭分段。
 - 打断规则：静默期、AI 生成、搜索/抓取、结束判断、打字 delay 期间来新消息都立即中断当前轮，保留未回复消息并重新等待 `inputDelayMs`；调用 `adapter.send` 后不再中断，新消息进入下一批。
 - 历史一致性：`Engine.handle(event,{signal,deferCommit:true})` 只生成草稿；进入发送边界时 `Engine.commitTurn(reply)` 写 user+assistant；发送前取消的草稿不写历史。
 - 正在输入：`src/typing.js` + NapCat `set_input_status`；仅 OneBot 私聊，在 `inputDelayMs` 合并静默期结束后开始，按 `channel+scope+conversationId` 隔离；群聊/官方 QQ 跳过。
 - 主动离开聊天：`src/chat-exit.js`；仅 QQ/OneBot 私聊，判断为收尾时跳过当前文字回复并记录 `data/chat-state.json`，下一条消息清除状态并正常回复。没有文字但摘要/标签是晚安、拜拜、去睡、离开等表情包也会终止。
 - 空闲终止：`src/chat-activity.js`；Alice 最后一条消息发送成功后计时，默认 10 分钟无回复标记终止；用户回复重置。活动时间和连续未回复次数存 `data/chat-activity.json`。
 - 收尾表情：OneBot 终止后用 `stickers.claim({force:true, mood})` 发一张表情，不发任何文字；官方 QQ 不支持图片，保持沉默。
-- 主动回访：`src/follow-up.js`；终止判断返回 `followup_minutes`，有效范围 5–1440 分钟，23–8 点顺延；仅 OneBot 私聊，每次终止只回访一次，用户提前回复会清除状态。空闲终止复用同一流程；连续未回复次数会交给 AI，由它决定是否延长。
+- 主动回访：`src/follow-up.js`；终止判断返回 `followup_minutes`，有效范围 5–1440 分钟，23–8 点顺延；仅 OneBot 私聊，每次终止只回访一次，用户提前回复会清除状态。回访只读取目标用户从 `ConversationState.visibleContext()` 得到的安全画像和上下文，不读取其他群成员或全局情绪。
 - 回访时间非法：先终止并发表情，后台立即连续带最近 20 条上下文让 AI 重选，直到合法；AI 请求失败则本次跳过，不用默认值。
 - 回访状态：`data/chat-state.json` version 2；离线/暂停/发送失败按 5 分钟重试，不设过期；到期结合实际上下文生成短消息，走同一打字延迟/发送队列。
 - 结束判断配置：`chatExit.enabled/idleMinutes/minConfidence/judgeModel/judgeTimeoutMs`；群聊和网页本机不生效。
@@ -60,11 +63,18 @@ Windows 启动顺序：先 `start-onebot.bat`，再 `start.bat`。控制台令�
 - 回访 tick：FollowUpScheduler 每分钟触发 `autonomy.tick()` 和 `IdleExitScheduler.tick()`；空间检查、空闲终止和回访检查同步，失败不影响回访。
 - 控制台：`127.0.0.1:3210`；可用 `node src/index.js --no-web` 或 `ALICE_DISABLE_WEB=1` 关闭 Web，OneBot/定时空间/回访继续运行。
 - OneBot：`127.0.0.1:3001`。
-- NapCat WebUI：默认端口 `6099`，实际监听地址见 `webui.json`；当前 `host` 为 `::`，建议改为 `127.0.0.1` 并启用强 token/访问控制。
+- NapCat WebUI：默认端口 `6099`，实际监听地址见本地 `webui.json`；应绑定 `127.0.0.1` 并启用强 token/访问控制。
 - NapCat 目录：`napcat/NapCat.52230.Shell`。
 - 表情库：全局共享；主动发表情约 5 分钟软间隔，用户发来表情时优先回且不受间隔限制；主回复默认不注入标签，主动发表情先调 `sticker_catalog` 取全量标签，再调 `send_sticker`；用户明确要表情或收到表情包可直接发。标签可在 Web 编辑，手动上传必须手写标签。聊天退出判断注入全量标签。
 - 历史：按会话隔离。
+- 短期连续身份：同账号私聊/群共享安全画像（关系阶段、枚举偏好、边界）；话题和未完成事项带来源 ACL。私聊私密话题不会进入群提示词，群提示词只含当前发送者在该群的上下文。
+- 用户情绪：按当前可见上下文保存短期 `userEmotion`、独立衰减并在换题时减弱；不能镜像成 Alice 的全局情绪。
+- 习惯审校：`src/conversation-style.js` 从最近回复计算连续问句、重复开头、文本相似度和表情重复，只向审校 AI 发送数字/布尔标记，不发送历史原文。
 - 长期记忆：私聊按账号、群聊按群隔离；群记忆群内共享。
+- 用户理解：`src/user-understanding.js` 定时汇总 QQ/OneBot 私聊的交流方式与性格枚举，默认每天 00:10；从启用后开始积累，不回填既有聊天历史，只从成功提交的私聊历史取样，未发送草稿不记录。每日摘要保留 35 天，每 7 天基于每日摘要做一次周汇总；输入按字符/消息/用户数限制。既有回复审校、`ConversationState` 安全画像和全局拟人情绪链路保持不变。
+- 用户画像隔离：同一可信 `channel+userId` 的私聊与群聊共享安全性格枚举，`identityLinks` 可显式跨通道合并；群聊只读取当前发送者的画像，原始私聊、每日摘要和具体私事不进入群提示词。画像只用于了解，不得用来迎合、附和或模仿用户喜好。
+- 用户画像配置：`userUnderstanding.enabled/hour/minute/timezone/judgeModel/judgeTimeoutMs/maxInputChars/maxDailyMessages/maxUsers/retentionDays/maxInjectedChars`，当前没有 Web 表单，直接改配置后重启。
+- 用户画像命令：QQ/OneBot 私聊和群聊可用 `/profile reset` 删除当前发送者画像及待汇总材料，远程命令先经过允许名单；本机 `/reset` 同时清当前会话历史和当前用户画像，`/forget all` 清当前记忆范围和画像。
 - 自动记忆：`src/memory.js` 在回复成功后异步判断并保存，失败不影响回复；明确“记住”请求直接保存。
 - 记忆配置：`memory.enabled`、`autoExtract`、`minImportance`、`maxPerKey`、`maxInjected`、`judgeModel`、`judgeTimeoutMs`。
 - 记忆注入顺序：重要度降序 → 最近访问 → 创建时间，之后截取 `maxInjected`。
@@ -75,6 +85,7 @@ Windows 启动顺序：先 `start-onebot.bat`，再 `start.bat`。控制台令�
 - 搜索体验：搜索期间保持“正在输入”（仅 OneBot 私聊），不发送“我搜一下/稍等”等过程消息，拿到结果后才生成最终答复。
 - 搜索配置：`webSearch.enabled`（总开关）、`searchEnabled`、`fetchEnabled`、`apiKey`、`maxResults`、`maxContentChars`、`maxCallsPerTurn`，以及顶层 `maxToolCallsPerTurn`；默认开启、5 条、6000 字、4 次联网、6 次工具。
 - 记忆存储：`data/store.json` version 2；v1 启动时自动迁移并备份到 `data/backups/`。
+- 用户画像存储：`data/user-understanding.json`；使用 SHA-256 身份 key、原子 0600 写入，损坏时隔离。该文件独立于 `/api/export`，导入 store 导出后会整体重置会话短期状态和用户画像。
 
 ## 修改后检查
 
@@ -83,5 +94,6 @@ Windows 启动顺序：先 `start-onebot.bat`，再 `start.bat`。控制台令�
 - [ ] `npm run check` 通过。
 - [ ] 改了前端时 `node --check public/app.js` 通过。
 - [ ] 已重启 Alice 并检查 3210/3001 端口。
+- [ ] `docs/HUMANLIKE-CHECKLIST.md` 的 15 项证据与当次代码、测试一致。
 - [ ] 已更新 README 或 `docs/MAINTENANCE.md`（行为/配置变化时）。
 - [ ] 没有把密钥或运行数据写入代码/文档。

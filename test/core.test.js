@@ -4,7 +4,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { AIRequestError, chat as aiChat } from "../src/ai.js";
-import { defaultConfig, loadConfig, publicConfig, saveConfig } from "../src/config.js";
+import {
+  defaultConfig,
+  loadConfig,
+  publicConfig,
+  saveConfig,
+  userUnderstandingDefaults,
+} from "../src/config.js";
+import {
+  ConversationState,
+  conversationStateKey,
+} from "../src/conversation-state.js";
 import { Store } from "../src/store.js";
 import { Engine } from "../src/engine.js";
 
@@ -30,6 +40,14 @@ function configured(overrides = {}) {
     webSearch: { ...config.webSearch, ...(overrides.webSearch ?? {}) },
     qzoneComments: { ...config.qzoneComments, ...(overrides.qzoneComments ?? {}) },
     memory: { ...config.memory, ...(overrides.memory ?? {}) },
+    conversationState: {
+      ...config.conversationState,
+      ...(overrides.conversationState ?? {}),
+    },
+    userUnderstanding: {
+      ...config.userUnderstanding,
+      ...(overrides.userUnderstanding ?? {}),
+    },
   };
 }
 
@@ -74,6 +92,26 @@ function aiReply(content, toolCalls = []) {
   };
 }
 
+function reviewObject(overrides = {}) {
+  return {
+    reply: "嗯，先歇会儿。",
+    silence: false,
+    topic: "今天有点累",
+    unfinished: "",
+    preference: "不喜欢被追问",
+    emotion: "concerned",
+    emotionIntensity: 0.6,
+    globalEmotion: {
+      action: "warm",
+      happiness: 0.02,
+      energy: 0,
+      interest: 0.01,
+      calm: 0.03,
+    },
+    ...overrides,
+  };
+}
+
 async function setupStore(t) {
   const root = await temporaryDirectory(t);
   const store = await new Store(root).init();
@@ -91,6 +129,8 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
   });
   assert.equal(defaultConfig.ai.reasoningEffort, "high");
   assert.equal(defaultConfig.ai.historyMessages, 30);
+  assert.ok(defaultConfig.persona.preferences.length >= 3);
+  assert.ok(defaultConfig.persona.opinions.length >= 2);
   assert.equal(defaultConfig.inputDelayMs, 2000);
   assert.match(defaultConfig.ai.systemPrompt, /默认只回一句/);
   assert.doesNotMatch(defaultConfig.ai.systemPrompt, /声称自己有意识/);
@@ -158,6 +198,34 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
     timezone: "Asia/Shanghai",
     retryDelayMinutes: 5,
   });
+  assert.deepEqual(defaultConfig.conversationState, {
+    enabled: true,
+    reviewEnabled: true,
+    judgeModel: "",
+    judgeTimeoutMs: 8000,
+    maxEntries: 200,
+    ttlHours: 72,
+    globalEmotionTtlHours: 24,
+    topicTtlHours: 24,
+    unfinishedTtlHours: 168,
+    userEmotionTtlHours: 6,
+    commonMemeTtlHours: 168,
+    profileTtlHours: 720,
+  });
+  assert.deepEqual(defaultConfig.userUnderstanding, {
+    enabled: true,
+    hour: 0,
+    minute: 10,
+    timezone: "Asia/Shanghai",
+    judgeModel: "",
+    judgeTimeoutMs: 15000,
+    maxInputChars: 16000,
+    maxDailyMessages: 200,
+    maxUsers: 200,
+    retentionDays: 35,
+    maxInjectedChars: 1200,
+  });
+  assert.deepEqual(defaultConfig.userUnderstanding, userUnderstandingDefaults);
   const saved = await saveConfig(root, {
     port: 4321,
     ai: { apiKey: "secret-ai", temperature: 0.6 },
@@ -266,6 +334,58 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
   assert.equal(followUpSaved.followUp.retryDelayMinutes, 3);
   assert.deepEqual(followUpSaved.followUp.quietHours, { start: 22, end: 9 });
   assert.equal(followUpSaved.followUp.timezone, "Asia/Shanghai");
+  const stateSaved = await saveConfig(root, {
+    conversationState: {
+      judgeModel: "deepseek-flash",
+      judgeTimeoutMs: 6000,
+      maxEntries: 300,
+      ttlHours: 48,
+      globalEmotionTtlHours: 12,
+    },
+  });
+  assert.equal(stateSaved.conversationState.judgeModel, "deepseek-flash");
+  assert.equal(stateSaved.conversationState.judgeTimeoutMs, 6000);
+  assert.equal(stateSaved.conversationState.maxEntries, 300);
+  assert.equal(stateSaved.conversationState.ttlHours, 48);
+  assert.equal(stateSaved.conversationState.globalEmotionTtlHours, 12);
+  const stateTtlSaved = await saveConfig(root, {
+    conversationState: {
+      topicTtlHours: 30,
+      unfinishedTtlHours: 96,
+      userEmotionTtlHours: 4,
+      commonMemeTtlHours: 120,
+      profileTtlHours: 480,
+    },
+  });
+  assert.equal(stateTtlSaved.conversationState.topicTtlHours, 30);
+  assert.equal(stateTtlSaved.conversationState.unfinishedTtlHours, 96);
+  assert.equal(stateTtlSaved.conversationState.userEmotionTtlHours, 4);
+  assert.equal(stateTtlSaved.conversationState.commonMemeTtlHours, 120);
+  assert.equal(stateTtlSaved.conversationState.profileTtlHours, 480);
+  const understandingSaved = await saveConfig(root, {
+    userUnderstanding: {
+      hour: 3,
+      minute: 25,
+      timezone: "Asia/Tokyo",
+      judgeModel: "deepseek-flash",
+      judgeTimeoutMs: 12000,
+      maxInputChars: 12000,
+      maxDailyMessages: 120,
+      maxUsers: 80,
+      retentionDays: 28,
+      maxInjectedChars: 900,
+    },
+  });
+  assert.equal(understandingSaved.userUnderstanding.hour, 3);
+  assert.equal(understandingSaved.userUnderstanding.minute, 25);
+  assert.equal(understandingSaved.userUnderstanding.timezone, "Asia/Tokyo");
+  assert.equal(understandingSaved.userUnderstanding.judgeModel, "deepseek-flash");
+  assert.equal(understandingSaved.userUnderstanding.judgeTimeoutMs, 12000);
+  assert.equal(understandingSaved.userUnderstanding.maxInputChars, 12000);
+  assert.equal(understandingSaved.userUnderstanding.maxDailyMessages, 120);
+  assert.equal(understandingSaved.userUnderstanding.maxUsers, 80);
+  assert.equal(understandingSaved.userUnderstanding.retentionDays, 28);
+  assert.equal(understandingSaved.userUnderstanding.maxInjectedChars, 900);
 
   const retained = await saveConfig(root, {
     ai: { apiKey: "   " },
@@ -282,6 +402,8 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
   assert.equal("apiKey" in exposed.ai, false);
   assert.equal("secret" in exposed.qq, false);
   assert.equal("token" in exposed.onebot, false);
+  assert.equal(exposed.userUnderstanding.maxInjectedChars, 900);
+  assert.equal("apiKey" in exposed.userUnderstanding, false);
 
   await assert.rejects(saveConfig(root, { port: 0 }), /port/);
   await assert.rejects(saveConfig(root, { ai: { baseUrl: "ftp://bad" } }), /ai.baseUrl/);
@@ -445,6 +567,73 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
     saveConfig(root, { followUp: { retryDelayMinutes: 0 } }),
     /retryDelayMinutes/,
   );
+  await assert.rejects(
+    saveConfig(root, { conversationState: { judgeTimeoutMs: 500 } }),
+    /conversationState.judgeTimeoutMs/,
+  );
+  await assert.rejects(
+    saveConfig(root, { conversationState: { maxEntries: 19 } }),
+    /conversationState.maxEntries/,
+  );
+  await assert.rejects(
+    saveConfig(root, { conversationState: { ttlHours: 0 } }),
+    /conversationState.ttlHours/,
+  );
+  await assert.rejects(
+    saveConfig(root, { conversationState: { globalEmotionTtlHours: 169 } }),
+    /conversationState.globalEmotionTtlHours/,
+  );
+  await assert.rejects(
+    saveConfig(root, { conversationState: { topicTtlHours: 0 } }),
+    /conversationState.topicTtlHours/,
+  );
+  await assert.rejects(
+    saveConfig(root, { conversationState: { profileTtlHours: 23 } }),
+    /conversationState.profileTtlHours/,
+  );
+  await assert.rejects(
+    saveConfig(root, { userUnderstanding: { hour: 24 } }),
+    /userUnderstanding.hour/,
+  );
+  await assert.rejects(
+    saveConfig(root, { userUnderstanding: { minute: 60 } }),
+    /userUnderstanding.minute/,
+  );
+  await assert.rejects(
+    saveConfig(root, { userUnderstanding: { timezone: "Not/AZone" } }),
+    /userUnderstanding.timezone/,
+  );
+  await assert.rejects(
+    saveConfig(root, { userUnderstanding: { maxDailyMessages: 9 } }),
+    /userUnderstanding.maxDailyMessages/,
+  );
+  await assert.rejects(
+    saveConfig(root, { userUnderstanding: { maxInjectedChars: 4001 } }),
+    /userUnderstanding.maxInjectedChars/,
+  );
+  await assert.rejects(
+    saveConfig(root, { persona: { preferences: ["x", 1] } }),
+    /persona.preferences/,
+  );
+});
+
+test("old config files gain user-understanding defaults without losing unknown keys", async (t) => {
+  const root = await temporaryDirectory(t);
+  await mkdir(path.join(root, "data"), { recursive: true });
+  await writeFile(
+    path.join(root, "data", "config.json"),
+    JSON.stringify({ port: 4322, futureSection: { keep: true } }),
+    "utf8",
+  );
+
+  const loaded = await loadConfig(root);
+  assert.deepEqual(loaded.userUnderstanding, userUnderstandingDefaults);
+  assert.deepEqual(loaded.futureSection, { keep: true });
+
+  const saved = await saveConfig(root, { userUnderstanding: { hour: 4 } });
+  assert.equal(saved.userUnderstanding.hour, 4);
+  assert.equal(saved.userUnderstanding.minute, 10);
+  assert.deepEqual(saved.futureSection, { keep: true });
 });
 
 test("damaged config is reported and never overwritten", async (t) => {
@@ -666,6 +855,89 @@ test("local commands manage only short history and scoped memories", async (t) =
   config = await saveConfig(root, {});
 });
 
+test("remote profile reset respects the conversation allowlist", async (t) => {
+  const { store } = await setupStore(t);
+  const cleared = [];
+  const engine = new Engine({
+    getConfig: async () => configured({ policy: { allowedUsers: ["10001"] } }),
+    store,
+    services: {
+      userUnderstanding: {
+        async clearUser(input) {
+          cleared.push({ scope: input.scope, userId: input.userId });
+        },
+      },
+    },
+  });
+
+  const blocked = await engine.handle(
+    event({
+      id: "profile-blocked",
+      channel: "onebot",
+      userId: "10002",
+      conversationId: "10002",
+      text: "/profile reset",
+    }),
+  );
+  assert.equal(blocked.suppressed, true);
+  assert.deepEqual(cleared, []);
+
+  const allowed = await engine.handle(
+    event({
+      id: "profile-allowed",
+      channel: "onebot",
+      scope: "group",
+      userId: "10001",
+      conversationId: "group-chat",
+      groupId: "20002",
+      text: "/profile reset",
+    }),
+  );
+  assert.match(allowed.text, /已清除你的画像/);
+  assert.deepEqual(cleared, [{ scope: "group", userId: "10001" }]);
+});
+
+test("local privacy commands report partial success when profile clearing throws", async (t) => {
+  const { store } = await setupStore(t);
+  const conversationKey = JSON.stringify([
+    "local",
+    "private",
+    "local-owner",
+    "owner",
+  ]);
+  const memoryKey = JSON.stringify(["private-memory", "local", "owner"]);
+  await store.append(conversationKey, [{ role: "user", content: "待清空历史" }]);
+  await store.remember(memoryKey, "待清空记忆");
+  const engine = new Engine({
+    getConfig: async () => configured(),
+    store,
+    services: {
+      userUnderstanding: {
+        async clearUser() {
+          throw new Error("User understanding clear failed");
+        },
+      },
+    },
+  });
+
+  const reset = await engine.handle(event({ id: "reset-profile-failed", text: "/reset" }));
+  assert.match(reset.text, /已清除当前会话的短期历史/);
+  assert.match(reset.text, /用户画像及待汇总材料清除失败/);
+  assert.match(reset.text, /\/profile reset/);
+  assert.doesNotMatch(reset.text, /已清除当前会话的短期历史和当前用户画像/);
+  assert.deepEqual(await store.history(conversationKey), []);
+  assert.equal((await store.memories(memoryKey)).length, 1);
+
+  const forget = await engine.handle(
+    event({ id: "forget-all-profile-failed", text: "/forget all" }),
+  );
+  assert.match(forget.text, /已删除当前范围的 1 条长期记忆/);
+  assert.match(forget.text, /用户画像及待汇总材料清除失败/);
+  assert.match(forget.text, /\/profile reset/);
+  assert.doesNotMatch(forget.text, /1 条长期记忆和当前用户画像/);
+  assert.equal((await store.memories(memoryKey)).length, 0);
+});
+
 test("demo mode is explicit and never calls AI or external services", async (t) => {
   const { store } = await setupStore(t);
   let chatCalls = 0;
@@ -806,8 +1078,304 @@ test("deferred commit writes history only after the reply is committed", async (
   );
 });
 
+test("user-understanding context stays after static system and before history", async (t) => {
+  const { store } = await setupStore(t);
+  const conversationKey = JSON.stringify(["onebot", "private", "10001", "10001"]);
+  await store.append(conversationKey, [
+    { role: "user", content: "很早的一条消息" },
+    { role: "assistant", content: "较早的回复" },
+  ]);
+  const contextEvents = [];
+  const recorded = [];
+  let sentMessages = null;
+  const engine = new Engine({
+    getConfig: async () =>
+      configured({ conversationState: { enabled: false, reviewEnabled: false } }),
+    store,
+    services: {
+      chat: async ({ messages }) => {
+        sentMessages = messages;
+        return aiReply("画像后的回复");
+      },
+      userUnderstanding: {
+        async context(event) {
+          contextEvents.push({
+            channel: event.channel,
+            scope: event.scope,
+            userId: event.userId,
+          });
+          return event.userId === "10001"
+            ? "【理解这位用户】\n偏好直接一点；只用于了解，不要迎合。"
+            : "";
+        },
+        async recordTurn(payload) {
+          recorded.push(payload);
+        },
+      },
+    },
+  });
+
+  await engine.handle(
+    event({
+      id: "understanding-private",
+      channel: "onebot",
+      userId: "10001",
+      conversationId: "10001",
+      text: "今天有点累",
+    }),
+  );
+  assert.equal(sentMessages[0].role, "system");
+  assert.match(sentMessages[0].content, /不要据此迎合、附和或模仿/);
+  assert.deepEqual(sentMessages[1], {
+    role: "system",
+    content: "【理解这位用户】\n偏好直接一点；只用于了解，不要迎合。",
+  });
+  assert.deepEqual(sentMessages.slice(2, 4), [
+    { role: "user", content: "很早的一条消息" },
+    { role: "assistant", content: "较早的回复" },
+  ]);
+  assert.equal(sentMessages[4].role, "user");
+  assert.deepEqual(contextEvents[0], {
+    channel: "onebot",
+    scope: "private",
+    userId: "10001",
+  });
+  assert.deepEqual(recorded[0].messages, [
+    { role: "user", content: "今天有点累" },
+    { role: "assistant", content: "画像后的回复" },
+  ]);
+});
+
+test("group understanding uses only the current sender's profile event", async (t) => {
+  const { store } = await setupStore(t);
+  const contextEvents = [];
+  let sentMessages = null;
+  const engine = new Engine({
+    getConfig: async () =>
+      configured({ conversationState: { enabled: false, reviewEnabled: false } }),
+    store,
+    services: {
+      chat: async ({ messages }) => {
+        sentMessages = messages;
+        return aiReply("群里的回复");
+      },
+      userUnderstanding: {
+        async context(event) {
+          contextEvents.push({ scope: event.scope, userId: event.userId });
+          return event.userId === "10001" ? "只包含当前用户的安全性格枚举" : "";
+        },
+        async recordTurn() {},
+      },
+    },
+  });
+
+  await engine.handle(
+    event({
+      id: "understanding-group-shared",
+      channel: "onebot",
+      scope: "group",
+      userId: "10001",
+      conversationId: "group-chat",
+      groupId: "20002",
+      text: "在群里聊",
+    }),
+  );
+  assert.deepEqual(contextEvents[0], { scope: "group", userId: "10001" });
+  assert.equal(sentMessages[1].role, "system");
+  assert.match(sentMessages[1].content, /当前用户/);
+
+  await engine.handle(
+    event({
+      id: "understanding-group-other",
+      channel: "onebot",
+      scope: "group",
+      userId: "10002",
+      conversationId: "group-chat",
+      groupId: "20002",
+      text: "另一个人发言",
+    }),
+  );
+  assert.deepEqual(contextEvents[1], { scope: "group", userId: "10002" });
+  assert.equal(sentMessages[1].role, "user");
+});
+
+test("understanding records each successfully committed history segment once", async (t) => {
+  const { store } = await setupStore(t);
+  const recorded = [];
+  const engine = new Engine({
+    getConfig: async () =>
+      configured({ conversationState: { enabled: false, reviewEnabled: false } }),
+    store,
+    services: {
+      chat: async () => aiReply("第一段。第二段。"),
+      userUnderstanding: {
+        async context() {
+          return "";
+        },
+        async recordTurn(payload) {
+          recorded.push(structuredClone(payload.messages));
+        },
+      },
+    },
+  });
+  const reply = await engine.handle(
+    event({
+      id: "understanding-segments",
+      channel: "onebot",
+      userId: "10001",
+      conversationId: "10001",
+      text: "原始消息",
+    }),
+    { deferCommit: true },
+  );
+  assert.deepEqual(recorded, []);
+
+  await engine.commitDeliveredTurn(reply, { assistantText: "第一段。" });
+  await engine.commitDeliveredTurn(reply, {
+    assistantText: "第二段。",
+    userTexts: ["中途补充"],
+    final: true,
+  });
+  await engine.commitDeliveredTurn(reply, { final: true });
+  assert.deepEqual(recorded, [
+    [
+      { role: "user", content: "原始消息" },
+      { role: "assistant", content: "第一段。" },
+    ],
+    [
+      { role: "user", content: "中途补充" },
+      { role: "assistant", content: "第二段。" },
+    ],
+  ]);
+
+  const cancelled = await engine.handle(
+    event({
+      id: "understanding-cancelled",
+      channel: "onebot",
+      userId: "10001",
+      conversationId: "10001",
+      text: "没有发出去",
+    }),
+    { deferCommit: true },
+  );
+  assert.ok(cancelled.turn);
+  assert.equal(recorded.length, 2);
+});
+
+test("partial delivery commits only sent segments in order and finalizes state once", async (t) => {
+  const { store } = await setupStore(t);
+  const conversationKey = JSON.stringify(["onebot", "private", "10001", "10001"]);
+  let memoryCalls = 0;
+  const engine = new Engine({
+    getConfig: async () =>
+      configured({ conversationState: { enabled: true, reviewEnabled: false } }),
+    store,
+    services: {
+      chat: async () => aiReply("第一段。第二段。"),
+      memory: {
+        afterTurn() {
+          memoryCalls += 1;
+          return Promise.resolve();
+        },
+      },
+    },
+  });
+  const input = event({
+    id: "partial-delivery",
+    channel: "onebot",
+    userId: "10001",
+    conversationId: "10001",
+    text: "原始合并消息",
+  });
+  const reply = await engine.handle(input, { deferCommit: true });
+  assert.deepEqual(await store.history(conversationKey), []);
+
+  assert.equal(
+    await engine.commitDeliveredTurn(reply, { assistantText: "第一段。" }),
+    true,
+  );
+  assert.deepEqual(
+    (await store.history(conversationKey)).map((message) => message.content),
+    ["原始合并消息", "第一段。"],
+  );
+  assert.equal(memoryCalls, 0);
+
+  assert.equal(
+    await engine.commitDeliveredTurn(reply, {
+      assistantText: "第二段。",
+      userTexts: ["生成期间补充的消息"],
+    }),
+    true,
+  );
+  assert.deepEqual(
+    (await store.history(conversationKey)).map((message) => message.content),
+    ["原始合并消息", "第一段。", "生成期间补充的消息", "第二段。"],
+  );
+  assert.equal(memoryCalls, 0);
+
+  assert.equal(
+    await engine.commitDeliveredTurn(reply, {
+      userTexts: ["未参与本轮生成的补充"],
+      final: true,
+    }),
+    true,
+  );
+  assert.deepEqual(
+    (await store.history(conversationKey)).map((message) => message.content),
+    [
+      "原始合并消息",
+      "第一段。",
+      "生成期间补充的消息",
+      "第二段。",
+      "未参与本轮生成的补充",
+    ],
+  );
+  assert.equal(memoryCalls, 1);
+  assert.equal(await engine.commitTurn(reply), false);
+  assert.equal(await engine.commitDeliveredTurn(reply, { final: true }), false);
+  assert.equal(
+    (await store.history(conversationKey)).length,
+    5,
+  );
+});
+
+test("partial delivery with no successful segment writes only the original user message", async (t) => {
+  const { store } = await setupStore(t);
+  const conversationKey = JSON.stringify(["onebot", "private", "10003", "10003"]);
+  const engine = new Engine({
+    getConfig: async () => configured({ conversationState: { reviewEnabled: false } }),
+    store,
+    services: { chat: async () => aiReply("没有真正发出去") },
+  });
+  const reply = await engine.handle(
+    event({
+      id: "partial-user-only",
+      channel: "onebot",
+      userId: "10003",
+      conversationId: "10003",
+      text: "首段发送失败",
+    }),
+    { deferCommit: true },
+  );
+  assert.equal(
+    await engine.commitDeliveredTurn(reply, {
+      assistantText: null,
+      userTexts: [],
+      final: true,
+    }),
+    true,
+  );
+  assert.deepEqual(await store.history(conversationKey), [
+    { role: "user", content: "首段发送失败" },
+  ]);
+});
+
 test("aborted deferred generation never writes history", async (t) => {
   const { store } = await setupStore(t);
+  let signalSeenResolve;
+  const signalSeen = new Promise((resolve) => {
+    signalSeenResolve = resolve;
+  });
   const conversationKey = JSON.stringify(["onebot", "private", "10001", "10001"]);
   let seenSignal;
   const engine = new Engine({
@@ -816,6 +1384,7 @@ test("aborted deferred generation never writes history", async (t) => {
     services: {
       chat: async ({ signal }) => {
         seenSignal = signal;
+        signalSeenResolve();
         return new Promise((resolve, reject) => {
           signal.addEventListener(
             "abort",
@@ -841,13 +1410,295 @@ test("aborted deferred generation never writes history", async (t) => {
     }),
     { signal: controller.signal, deferCommit: true },
   );
-  for (let index = 0; index < 50 && !seenSignal; index += 1) {
-    await new Promise((resolve) => setImmediate(resolve));
+  let signalTimeout;
+  try {
+    await Promise.race([
+      signalSeen,
+      new Promise((_, reject) => {
+        signalTimeout = setTimeout(
+          () => reject(new Error("主模型未收到取消信号")),
+          2000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(signalTimeout);
   }
   assert.ok(seenSignal);
   controller.abort();
   await assert.rejects(promise, /取消/);
   assert.deepEqual(await store.history(conversationKey), []);
+});
+
+test("review updates state only in commitTurn and keeps dynamic state at the final user message", async (t) => {
+  const { store } = await setupStore(t);
+  const input = event({
+    id: "review-commit",
+    channel: "onebot",
+    userId: "10001",
+    conversationId: "10001",
+    text: "晚安",
+  });
+  const conversationKey = JSON.stringify(["onebot", "private", "10001", "10001"]);
+  let mainPrompt;
+  let reviewArgs;
+  let reviewCalls = 0;
+  const engine = new Engine({
+    getConfig: async () => configured(),
+    store,
+    services: {
+      chat: async ({ messages }) => {
+        mainPrompt = structuredClone(messages);
+        return aiReply("晚安啦，明天见。");
+      },
+      reviewChat: async (args) => {
+        reviewCalls += 1;
+        reviewArgs = args;
+        return aiReply(JSON.stringify(reviewObject({ reply: "晚安。", silence: true })));
+      },
+    },
+  });
+  const stateKey = conversationStateKey(input);
+  await engine.conversationState.updateTurn({
+    conversationKey: stateKey,
+    config: configured(),
+    review: {
+      ...reviewObject(),
+      topic: "只放在动态 user 的状态",
+    },
+    now: Date.now() - 1000,
+  });
+
+  const reply = await engine.handle(input, { deferCommit: true });
+  assert.equal(mainPrompt[0].content.includes("只放在动态 user 的状态"), false);
+  assert.match(mainPrompt.at(-1).content, /只放在动态 user 的状态/);
+  assert.equal(reply.suppressed, true);
+  assert.equal(reply.silent, true);
+  assert.equal(reply.turn.assistantText, null);
+  assert.equal(reply.chatEnded, undefined);
+  assert.deepEqual(await store.history(conversationKey), []);
+
+  const reviewPayload = JSON.parse(reviewArgs.messages.at(-1).content);
+  assert.deepEqual(Object.keys(reviewPayload).sort(), [
+    "current_user",
+    "draft_reply",
+    "style_flags",
+  ]);
+  assert.equal(reviewPayload.style_flags.silence_allowed, true);
+  assert.equal(reviewPayload.current_user, "晚安");
+  assert.equal(reviewArgs.thinking, "disabled");
+  assert.equal(reviewArgs.maxTokens, 1000);
+  assert.equal(reviewCalls, 1);
+
+  assert.equal(await engine.commitTurn(reply), true);
+  assert.deepEqual(
+    (await store.history(conversationKey)).map((message) => message.role),
+    ["user"],
+  );
+  const saved = await engine.conversationState.context(stateKey, configured());
+  assert.equal(saved.conversation.topic, "今天有点累");
+  assert.ok(saved.global);
+});
+
+test("review never rewrites tool rounds or asks for a second rewrite", async (t) => {
+  const { store } = await setupStore(t);
+  let round = 0;
+  let reviewCalls = 0;
+  const engine = new Engine({
+    getConfig: async () => configured(),
+    store,
+    services: {
+      chat: async () => {
+        round += 1;
+        return round === 1
+          ? aiReply("", [{ name: "send_face", arguments: { faceId: 14 } }])
+          : aiReply("工具结果保持不变。");
+      },
+      reviewChat: async () => {
+        reviewCalls += 1;
+        return aiReply(JSON.stringify(reviewObject({ reply: "不应采用" })));
+      },
+    },
+  });
+  const result = await engine.handle(
+    event({ id: "review-tool", channel: "onebot" }),
+  );
+  assert.equal(result.text, "工具结果保持不变。");
+  assert.deepEqual(result.faces, [14]);
+  assert.equal(reviewCalls, 0);
+  assert.equal(round, 2);
+});
+
+test("review receives only current text, draft, and aggregate style flags", async (t) => {
+  const { store } = await setupStore(t);
+  const input = event({
+    id: "review-private-payload",
+    channel: "onebot",
+    userId: "10008",
+    conversationId: "10008",
+    text: "今天继续说这个",
+  });
+  const conversationKey = JSON.stringify(["onebot", "private", "10008", "10008"]);
+  await store.append(conversationKey, [
+    { role: "user", content: "历史用户秘密Z" },
+    { role: "assistant", content: "重复卡点回答甲？" },
+    { role: "assistant", content: "重复卡点回答乙？" },
+  ]);
+  let reviewArgs;
+  const engine = new Engine({
+    getConfig: async () => configured(),
+    store,
+    services: {
+      chat: async () => aiReply("重复卡点回答丙，换个说法。"),
+      reviewChat: async (args) => {
+        reviewArgs = args;
+        return aiReply(
+          JSON.stringify(
+            reviewObject({
+              reply: "换个说法接住你。",
+            }),
+          ),
+        );
+      },
+    },
+  });
+  await engine.handle(input);
+  const payload = JSON.parse(reviewArgs.messages.at(-1).content);
+  assert.deepEqual(Object.keys(payload).sort(), [
+    "current_user",
+    "draft_reply",
+    "style_flags",
+  ]);
+  assert.doesNotMatch(JSON.stringify(payload), /历史用户秘密Z/);
+  assert.equal(payload.style_flags.consecutive_questions, 2);
+  assert.equal(payload.style_flags.repeated_opening, true);
+  assert.ok(payload.style_flags.draft_similarity > 0.3);
+  for (const value of Object.values(payload.style_flags)) {
+    assert.ok(typeof value === "number" || typeof value === "boolean");
+  }
+  assert.equal(reviewArgs.thinking, "disabled");
+});
+
+test("strict review parsing and review failure fall back to the original reply", async (t) => {
+  const { store } = await setupStore(t);
+  let malformedCalls = 0;
+  const malformed = new Engine({
+    getConfig: async () => configured(),
+    store,
+    services: {
+      chat: async () => aiReply("正常原稿。"),
+      reviewChat: async () => {
+        malformedCalls += 1;
+        return aiReply("{}");
+      },
+    },
+  });
+  const malformedResult = await malformed.handle(
+    event({ id: "review-malformed", text: "你好" }),
+  );
+  assert.equal(malformedResult.text, "正常原稿。");
+  assert.equal(malformedCalls, 1);
+
+  let errorCalls = 0;
+  const failed = new Engine({
+    getConfig: async () => configured(),
+    store,
+    services: {
+      chat: async () => aiReply("失败时仍用原稿。"),
+      reviewChat: async () => {
+        errorCalls += 1;
+        throw new Error("review unavailable");
+      },
+    },
+  });
+  const failedResult = await failed.handle(
+    event({ id: "review-failed", text: "你好" }),
+  );
+  assert.equal(failedResult.text, "失败时仍用原稿。");
+  assert.equal(errorCalls, 1);
+});
+
+test("silence is limited to explicit acknowledgements and rejects unsafe text", async (t) => {
+  const { store } = await setupStore(t);
+  const run = async (text, attachments = []) => {
+    const engine = new Engine({
+      getConfig: async () => configured(),
+      store,
+      services: {
+        chat: async () => aiReply("原稿"),
+        reviewChat: async () =>
+          aiReply(JSON.stringify(reviewObject({ reply: "", silence: true }))),
+      },
+    });
+    return engine.handle(
+      event({
+        id: `silence-${Math.random()}`,
+        channel: "onebot",
+        userId: `user-${Math.random()}`,
+        conversationId: `conversation-${Math.random()}`,
+        text,
+        attachments,
+      }),
+    );
+  };
+
+  const safeAck = await run("好的");
+  assert.equal(safeAck.suppressed, true);
+  assert.equal(safeAck.silent, true);
+  for (const text of ["我想死了", "救命", "帮帮我？", "今天好累"]) {
+    const result = await run(text);
+    assert.equal(result.suppressed, undefined);
+    assert.equal(result.text, "原稿");
+  }
+  const attachment = await run("好的", [
+    { type: "image", url: "https://example.com/image.png" },
+  ]);
+  assert.equal(attachment.suppressed, undefined);
+  assert.equal(attachment.text, "原稿");
+});
+
+test("cancellation during review is checked before committing history", async (t) => {
+  const { store } = await setupStore(t);
+  let reviewStarted;
+  let releaseReview;
+  const started = new Promise((resolve) => {
+    reviewStarted = resolve;
+  });
+  const reviewGate = new Promise((resolve) => {
+    releaseReview = resolve;
+  });
+  const engine = new Engine({
+    getConfig: async () => configured(),
+    store,
+    services: {
+      chat: async () => aiReply("原稿"),
+      reviewChat: async () => {
+        reviewStarted();
+        await reviewGate;
+        return aiReply(JSON.stringify(reviewObject()));
+      },
+    },
+  });
+  const controller = new AbortController();
+  const input = event({
+    id: "review-cancel",
+    channel: "onebot",
+    userId: "10001",
+    conversationId: "10001",
+    text: "你好",
+  });
+  const pending = engine.handle(input, {
+    signal: controller.signal,
+    deferCommit: true,
+  });
+  await started;
+  controller.abort();
+  releaseReview();
+  await assert.rejects(pending, /取消/);
+  assert.deepEqual(
+    await store.history(JSON.stringify(["onebot", "private", "10001", "10001"])),
+    [],
+  );
 });
 
 test("face tool validates integer 0..5000 on local and OneBot only", async (t) => {
@@ -1992,7 +2843,7 @@ test("engine skips automatic extraction when memory is disabled or already saved
       },
     },
   });
-  await engine.handle(
+  const rememberedResult = await engine.handle(
     event({
       id: "tool-memory",
       channel: "onebot",
@@ -2002,6 +2853,7 @@ test("engine skips automatic extraction when memory is disabled or already saved
     }),
   );
   assert.equal(memoryCalls, 0);
+  assert.equal(rememberedResult.actionExecuted, true);
   assert.equal(
     (await store.memories(JSON.stringify(["private-memory", "onebot", "10002"]))).length,
     1,
@@ -2233,7 +3085,7 @@ test("recall searches full memory first and skips history on a hit", async (t) =
       },
     },
   });
-  await engine.handle(
+  const result = await engine.handle(
     event({
       id: "recall-memory",
       channel: "onebot",
@@ -2247,6 +3099,9 @@ test("recall searches full memory first and skips history on a hit", async (t) =
   assert.equal(toolResult.source, "memory");
   assert.equal(toolResult.results[0].text, "用户养的猫叫咪咪");
   assert.equal(fetched, 0);
+  assert.equal(result.needsSlowPacing, true);
+  assert.equal(result.pacingHints.recall, true);
+  assert.equal(result.actionExecuted, undefined);
 });
 
 test("recall falls back to local history before OneBot history", async (t) => {

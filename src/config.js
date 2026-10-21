@@ -78,6 +78,35 @@ export const followUpDefaults = Object.freeze({
   retryDelayMinutes: 5,
 });
 
+export const conversationStateDefaults = Object.freeze({
+  enabled: true,
+  reviewEnabled: true,
+  judgeModel: "",
+  judgeTimeoutMs: 8000,
+  maxEntries: 200,
+  ttlHours: 72,
+  globalEmotionTtlHours: 24,
+  topicTtlHours: 24,
+  unfinishedTtlHours: 168,
+  userEmotionTtlHours: 6,
+  commonMemeTtlHours: 168,
+  profileTtlHours: 720,
+});
+
+export const userUnderstandingDefaults = Object.freeze({
+  enabled: true,
+  hour: 0,
+  minute: 10,
+  timezone: "Asia/Shanghai",
+  judgeModel: "",
+  judgeTimeoutMs: 15000,
+  maxInputChars: 16000,
+  maxDailyMessages: 200,
+  maxUsers: 200,
+  retentionDays: 35,
+  maxInjectedChars: 1200,
+});
+
 export const defaultConfig = deepFreeze({
   port: 3210,
   inputDelayMs: 2000,
@@ -145,8 +174,20 @@ export const defaultConfig = deepFreeze({
     ...followUpDefaults,
     quietHours: { ...followUpDefaults.quietHours },
   },
+  conversationState: { ...conversationStateDefaults },
+  userUnderstanding: { ...userUnderstandingDefaults },
   persona: {
     name: "Alice",
+    preferences: [
+      "喜欢雨声和安静的室内",
+      "喜欢橘子汽水，不太能接受苦咖啡",
+      "偏爱直白但不冒犯的玩笑",
+      "觉得认真听人说话比急着给建议重要",
+    ],
+    opinions: [
+      "聊天不需要每一句都回答成完整方案",
+      "熟悉感应该来自相处，不该靠催回复证明",
+    ],
   },
   identityLinks: {},
   demo: true,
@@ -212,6 +253,8 @@ function validateConfig(config) {
     "chatExit",
     "webSearch",
     "followUp",
+    "conversationState",
+    "userUnderstanding",
     "persona",
     "identityLinks",
   ]) {
@@ -542,12 +585,123 @@ function validateConfig(config) {
   ) {
     throw new TypeError("followUp.retryDelayMinutes 必须是 1..60 的整数");
   }
+  if (!isPlainObject(config.conversationState)) {
+    throw new TypeError("conversationState 必须是对象");
+  }
+  const conversationState = config.conversationState;
+  for (const key of ["enabled", "reviewEnabled"]) {
+    if (typeof conversationState[key] !== "boolean") {
+      throw new TypeError(`conversationState.${key} 必须是布尔值`);
+    }
+  }
+  if (typeof conversationState.judgeModel !== "string") {
+    throw new TypeError("conversationState.judgeModel 必须是字符串");
+  }
+  if (
+    !Number.isInteger(conversationState.judgeTimeoutMs) ||
+    conversationState.judgeTimeoutMs < 1000 ||
+    conversationState.judgeTimeoutMs > 60000
+  ) {
+    throw new TypeError("conversationState.judgeTimeoutMs 必须是 1000..60000 的整数");
+  }
+  if (
+    !Number.isInteger(conversationState.maxEntries) ||
+    conversationState.maxEntries < 20 ||
+    conversationState.maxEntries > 2000
+  ) {
+    throw new TypeError("conversationState.maxEntries 必须是 20..2000 的整数");
+  }
+  if (
+    !Number.isFinite(conversationState.ttlHours) ||
+    conversationState.ttlHours < 1 ||
+    conversationState.ttlHours > 720
+  ) {
+    throw new TypeError("conversationState.ttlHours 必须在 1..720 之间");
+  }
+  if (
+    !Number.isFinite(conversationState.globalEmotionTtlHours) ||
+    conversationState.globalEmotionTtlHours < 1 ||
+    conversationState.globalEmotionTtlHours > 168
+  ) {
+    throw new TypeError("conversationState.globalEmotionTtlHours 必须在 1..168 之间");
+  }
+  for (const [key, min, max] of [
+    ["topicTtlHours", 1, 168],
+    ["unfinishedTtlHours", 1, 720],
+    ["userEmotionTtlHours", 1, 72],
+    ["commonMemeTtlHours", 1, 720],
+    ["profileTtlHours", 24, 8760],
+  ]) {
+    if (
+      !Number.isFinite(conversationState[key]) ||
+      conversationState[key] < min ||
+      conversationState[key] > max
+    ) {
+      throw new TypeError(`conversationState.${key} 必须在 ${min}..${max} 之间`);
+    }
+  }
+  if (!isPlainObject(config.userUnderstanding)) {
+    throw new TypeError("userUnderstanding 必须是对象");
+  }
+  const userUnderstanding = config.userUnderstanding;
+  if (typeof userUnderstanding.enabled !== "boolean") {
+    throw new TypeError("userUnderstanding.enabled 必须是布尔值");
+  }
+  for (const [key, min, max] of [
+    ["hour", 0, 23],
+    ["minute", 0, 59],
+    ["judgeTimeoutMs", 1000, 60000],
+    ["maxInputChars", 1000, 100000],
+    ["maxDailyMessages", 10, 1000],
+    ["maxUsers", 1, 5000],
+    ["retentionDays", 7, 3650],
+    ["maxInjectedChars", 200, 4000],
+  ]) {
+    if (
+      !Number.isInteger(userUnderstanding[key]) ||
+      userUnderstanding[key] < min ||
+      userUnderstanding[key] > max
+    ) {
+      throw new TypeError(`userUnderstanding.${key} 必须是 ${min}..${max} 的整数`);
+    }
+  }
+  if (
+    typeof userUnderstanding.timezone !== "string" ||
+    !userUnderstanding.timezone.trim() ||
+    userUnderstanding.timezone.length > 100
+  ) {
+    throw new TypeError("userUnderstanding.timezone 必须是 IANA 时区");
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: userUnderstanding.timezone,
+    }).format();
+  } catch {
+    throw new TypeError("userUnderstanding.timezone 必须是 IANA 时区");
+  }
+  if (
+    typeof userUnderstanding.judgeModel !== "string" ||
+    userUnderstanding.judgeModel.length > 200
+  ) {
+    throw new TypeError("userUnderstanding.judgeModel 必须是字符串");
+  }
   if (
     !isPlainObject(config.persona) ||
     typeof config.persona.name !== "string" ||
     !config.persona.name.trim()
   ) {
     throw new TypeError("persona.name 必须是非空字符串");
+  }
+  for (const key of ["preferences", "opinions"]) {
+    if (
+      !Array.isArray(config.persona[key]) ||
+      config.persona[key].length > 8 ||
+      config.persona[key].some(
+        (item) => typeof item !== "string" || !item.trim() || item.length > 120,
+      )
+    ) {
+      throw new TypeError(`persona.${key} 必须是最多 8 条、每条 1..120 字符的字符串数组`);
+    }
   }
   if (!isPlainObject(config.identityLinks)) {
     throw new TypeError("identityLinks 必须是对象");

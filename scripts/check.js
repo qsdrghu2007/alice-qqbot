@@ -15,6 +15,9 @@ const requiredFiles = [
   "src/chat-exit.js",
   "src/chat-activity.js",
   "src/follow-up.js",
+  "src/conversation-state.js",
+  "src/conversation-style.js",
+  "src/user-understanding.js",
   "src/delivery.js",
   "src/search.js",
   "src/web-search.js",
@@ -33,6 +36,8 @@ const requiredFiles = [
   "public/index.html",
   "public/styles.css",
   "public/app.js",
+  "test/reply-flow.test.js",
+  "docs/HUMANLIKE-CHECKLIST.md",
 ];
 
 function fail(message) {
@@ -79,6 +84,33 @@ for (const relative of requiredFiles.filter((file) => file.endsWith(".js"))) {
   if (result.status !== 0) {
     fail(`${relative} 语法检查失败\n${result.stderr.trim()}`);
   }
+}
+
+try {
+  const checklist = await readFile(
+    path.join(root, "docs", "HUMANLIKE-CHECKLIST.md"),
+    "utf8",
+  );
+  for (let index = 1; index <= 15; index += 1) {
+    const id = `HM-${String(index).padStart(2, "0")}`;
+    if (!checklist.includes(`| ${id} |`)) {
+      fail(`拟人化验收矩阵缺少 ${id}`);
+    }
+  }
+  for (const testFile of [
+    "test/message-batcher.test.js",
+    "test/delivery.test.js",
+    "test/reply-flow.test.js",
+    "test/conversation-state.test.js",
+    "test/follow-up.test.js",
+    "test/chat-exit.test.js",
+  ]) {
+    if (!checklist.includes(testFile)) {
+      fail(`拟人化验收矩阵缺少测试引用 ${testFile}`);
+    }
+  }
+} catch (error) {
+  fail(`无法检查拟人化验收矩阵：${error.message}`);
 }
 
 if (!process.exitCode) {

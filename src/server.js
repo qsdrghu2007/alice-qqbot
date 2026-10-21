@@ -231,6 +231,42 @@ function parseMemoryScopeKey(key) {
   return null;
 }
 
+function understandingEventsForMemoryScope(scope, config) {
+  if (!scope) return [];
+  const channels = new Set(["onebot", "qq"]);
+  if (scope.kind === "private" && channels.has(scope.channel)) {
+    return [
+      {
+        channel: scope.channel,
+        scope: "private",
+        userId: scope.id,
+        conversationId: scope.id,
+        text: "",
+        timestamp: Date.now(),
+      },
+    ];
+  }
+  if (scope.kind !== "identity") return [];
+  const events = [];
+  for (const [key, linked] of Object.entries(config.identityLinks ?? {})) {
+    if (linked !== scope.id) continue;
+    const separator = key.indexOf(":");
+    if (separator < 1) continue;
+    const channel = key.slice(0, separator);
+    const userId = key.slice(separator + 1);
+    if (!channels.has(channel) || !userId) continue;
+    events.push({
+      channel,
+      scope: "private",
+      userId,
+      conversationId: userId,
+      text: "",
+      timestamp: Date.now(),
+    });
+  }
+  return events;
+}
+
 function memoryScopeLabel(scope) {
   if (!scope) return "未知范围";
   const channel = CHANNEL_LABELS[scope.channel] ?? scope.channel;
@@ -453,6 +489,8 @@ export function createWebServer({
   qzoneComments,
   autonomy,
   stickers,
+  conversationState,
+  userUnderstanding,
   reconnect,
   configChanged,
   logger = console,
@@ -760,6 +798,12 @@ export function createWebServer({
           throw new RequestError(503, "记忆清空功能不可用", "MEMORY_UNAVAILABLE");
         }
         const removed = await store.clearMemories(key);
+        const scope = parseMemoryScopeKey(key);
+        if (userUnderstanding && typeof userUnderstanding.clearUser === "function") {
+          for (const event of understandingEventsForMemoryScope(scope, config)) {
+            await userUnderstanding.clearUser(event);
+          }
+        }
         sendJson(res, 200, { ok: true, key, removed });
         return;
       }
@@ -795,6 +839,8 @@ export function createWebServer({
         const body = await readJsonBody(req, MAX_IMPORT_BYTES);
         const imported = plainObject(body) && plainObject(body.data) ? body.data : body;
         const result = await store.importData(imported);
+        await conversationState?.resetAll?.();
+        await userUnderstanding?.resetAll?.();
         sendJson(res, 200, { ok: true, ...result });
         return;
       }

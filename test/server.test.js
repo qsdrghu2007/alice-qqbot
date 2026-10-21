@@ -150,6 +150,8 @@ async function fixture(t, options = {}) {
     },
     autonomy: { status: () => ({ running: false, nextAt: null }) },
     stickers: options.stickers,
+    conversationState: options.conversationState,
+    userUnderstanding: options.userUnderstanding,
   });
   const address = await listenLocal(server, 0);
   t.after(
@@ -332,7 +334,20 @@ test("body size limits are enforced before parsing", async (t) => {
 });
 
 test("import alone accepts exports larger than the normal API limit", async (t) => {
-  const app = await fixture(t);
+  let conversationResets = 0;
+  let understandingResets = 0;
+  const app = await fixture(t, {
+    conversationState: {
+      async resetAll() {
+        conversationResets += 1;
+      },
+    },
+    userUnderstanding: {
+      async resetAll() {
+        understandingResets += 1;
+      },
+    },
+  });
   const response = await fetch(`${app.base}/api/import`, {
     method: "POST",
     headers: {
@@ -347,6 +362,8 @@ test("import alone accepts exports larger than the normal API limit", async (t) 
     }),
   });
   assert.equal(response.status, 200);
+  assert.equal(conversationResets, 1);
+  assert.equal(understandingResets, 1);
 });
 
 test("chat uses the fixed local owner event and accepts HTTPS images", async (t) => {
@@ -466,6 +483,33 @@ test("memory API lists scopes and manages private and group memories", async (t)
   );
   assert.equal(cleared.status, 200);
   assert.deepEqual(await cleared.json(), { ok: true, key: groupKey, removed: 1 });
+
+  const understandingClears = [];
+  const privateApp = await fixture(t, {
+    userUnderstanding: {
+      async clearUser(input) {
+        understandingClears.push({
+          channel: input.channel,
+          scope: input.scope,
+          userId: input.userId,
+        });
+      },
+    },
+  });
+  const privateKey = JSON.stringify(["private-memory", "onebot", "30003"]);
+  await fetch(`${privateApp.base}/api/memories`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ key: privateKey, text: "仅属于 30003" }),
+  });
+  const privateClear = await fetch(
+    `${privateApp.base}/api/memories?key=${encodeURIComponent(privateKey)}`,
+    { method: "DELETE", headers: auth(privateApp.token) },
+  );
+  assert.equal(privateClear.status, 200);
+  assert.deepEqual(understandingClears, [
+    { channel: "onebot", scope: "private", userId: "30003" },
+  ]);
 
   const invalidType = await fetch(`${app.base}/api/memories`, {
     method: "POST",

@@ -145,6 +145,8 @@ test("chat exit decision parsing and prompt cover closings without false positiv
     confidence: 0.9,
     reason: "",
     stickerMood: "",
+    shouldFollowUp: null,
+    followupReason: "",
     followUpMinutes: null,
   });
   assert.equal(parseChatExitDecision("not json"), null);
@@ -155,6 +157,17 @@ test("chat exit decision parsing and prompt cover closings without false positiv
       '{"end_chat":true,"confidence":0.9,"sticker_mood":"困倦"}',
     ).stickerMood,
     "困倦",
+  );
+  const declined = parseChatExitDecision(
+    '{"end_chat":true,"confidence":0.9,"should_follow_up":false,"followup_reason":"","followup_minutes":null}',
+  );
+  assert.equal(declined.shouldFollowUp, false);
+  assert.equal(declined.followUpMinutes, null);
+  assert.equal(
+    parseChatExitDecision(
+      '{"end_chat":true,"confidence":0.9,"should_follow_up":true,"followup_reason":"等考试结果","followup_minutes":45}',
+    ).followupReason,
+    "等考试结果",
   );
 
   const messages = buildChatExitMessages({
@@ -167,9 +180,12 @@ test("chat exit decision parsing and prompt cover closings without false positiv
   assert.match(messages[0].content, /好累/);
   assert.match(messages[0].content, /不确定/);
   assert.match(messages[0].content, /sticker_mood/);
+  assert.match(messages[0].content, /should_follow_up/);
+  assert.match(messages[0].content, /followup_reason/);
   assert.match(messages[1].content, /可爱、困倦、小情绪/);
   assert.match(messages[1].content, /最近对话/);
   assert.match(messages[1].content, /当前用户最后一条私聊消息/);
+  assert.doesNotMatch(messages[1].content, /10001|说话人 QQ/);
 
   const manyTags = Array.from({ length: 25 }, (_, index) => `标签${index + 1}`);
   const allTagMessages = buildChatExitMessages({
@@ -272,6 +288,40 @@ test("chat exit judge records a high-confidence termination", async (t) => {
   assert.equal(calls[0].maxTokens, 120);
   assert.equal(calls[0].config.temperature, 0);
   assert.equal(calls[0].config.model, "judge-model");
+  assert.doesNotMatch(calls[0].messages[1].content, /10001|说话人 QQ/);
+});
+
+test("a strict explicit decline cancels follow-up without becoming a time error", async (t) => {
+  const root = await setup(t);
+  let needsTimeCalls = 0;
+  const manager = await new ChatExitManager({
+    root,
+    logger: noopLogger,
+    now: () => new Date("2026-10-19T12:00:00.000Z"),
+    onNeedsTime: () => {
+      needsTimeCalls += 1;
+    },
+    chat: async () =>
+      decision({
+        end_chat: true,
+        confidence: 0.95,
+        should_follow_up: false,
+        followup_reason: "",
+        followup_minutes: null,
+      }),
+  }).init();
+  const target = event({ text: "别找我，我想自己待会" });
+  const verdict = await manager.evaluate({ event: target, config: configured() });
+
+  assert.equal(verdict.terminate, true);
+  assert.equal(verdict.shouldFollowUp, false);
+  assert.equal(verdict.followUpStatus, "skipped");
+  assert.equal(verdict.needsTime, false);
+  assert.equal(needsTimeCalls, 0);
+  const entry = await manager.getEntry(target);
+  assert.equal(entry.followUpStatus, "skipped");
+  assert.equal(entry.followupShouldFollowUp, false);
+  assert.equal(entry.lastError, "followup_declined");
 });
 
 test("low confidence, false results, failures, groups, and local chats do not terminate", async (t) => {

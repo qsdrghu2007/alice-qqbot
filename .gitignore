@@ -1,11 +1,39 @@
+# Runtime data and installed components
 node_modules/
-.env
 data/
 napcat/
 releases/
+backups/
+*.bak
+*.tmp
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
 *.log
-.DS_Store
-Thumbs.db
+logs/
+caches/
+cache/
+credentials/
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa*
+
+# Generated artifacts and host metadata
 playwright-report/
 test-results/
 coverage/
+screenshots/
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+.DS_Store
+Thumbs.db

@@ -100,6 +100,14 @@ function normalizeEntry(key, raw) {
     typeof raw.conversationKey === "string" && raw.conversationKey
       ? raw.conversationKey
       : JSON.stringify([channel, "private", conversationId, userId]);
+  const followupReason =
+    typeof raw.followupReason === "string"
+      ? raw.followupReason.trim().slice(0, 200)
+      : "";
+  const followupShouldFollowUp =
+    typeof raw.followupShouldFollowUp === "boolean"
+      ? raw.followupShouldFollowUp
+      : null;
   return {
     terminatedAt,
     conversationKey,
@@ -110,6 +118,8 @@ function normalizeEntry(key, raw) {
     followUpAt,
     followUpMinutes,
     followUpStatus,
+    followupReason,
+    followupShouldFollowUp,
     followUpAttempts:
       Number.isInteger(raw.followUpAttempts) && raw.followUpAttempts >= 0
         ? raw.followUpAttempts
@@ -323,6 +333,14 @@ export class ChatExitState {
         followUpAt: followUpStatus === "scheduled" ? followUpAt : null,
         followUpMinutes,
         followUpStatus,
+        followupReason:
+          typeof settings.followupReason === "string"
+            ? settings.followupReason.trim().slice(0, 200)
+            : "",
+        followupShouldFollowUp:
+          typeof settings.followupShouldFollowUp === "boolean"
+            ? settings.followupShouldFollowUp
+            : null,
         followUpAttempts: 0,
         lastAttemptAt: null,
         nextAttemptAt: null,
@@ -355,10 +373,19 @@ export class ChatExitState {
     });
   }
 
-  async setFollowUpTime(key, { minutes, at }) {
+  async setFollowUpTime(
+    key,
+    { minutes, at, reason = null, expectedTerminatedAt = null },
+  ) {
     return this._locked(async () => {
       const entry = this.data.conversations[key];
       if (!entry) return null;
+      if (
+        expectedTerminatedAt &&
+        entry.terminatedAt !== normalizeTime(expectedTerminatedAt)
+      ) {
+        return null;
+      }
       if (!Number.isInteger(minutes) || minutes < 0) {
         throw new TypeError("回访分钟数必须是非负整数");
       }
@@ -369,6 +396,11 @@ export class ChatExitState {
         followUpAt,
         followUpMinutes: minutes,
         followUpStatus: "scheduled",
+        followupReason:
+          typeof reason === "string"
+            ? reason.trim().slice(0, 200)
+            : entry.followupReason || "",
+        followupShouldFollowUp: true,
         nextAttemptAt: null,
         lastError: null,
       };
@@ -378,16 +410,23 @@ export class ChatExitState {
     });
   }
 
-  async markTimeInvalid(key, message) {
+  async markTimeInvalid(key, message, expectedTerminatedAt = null) {
     return this._locked(async () => {
       const entry = this.data.conversations[key];
       if (!entry) return null;
+      if (
+        expectedTerminatedAt &&
+        entry.terminatedAt !== normalizeTime(expectedTerminatedAt)
+      ) {
+        return null;
+      }
       const next = structuredClone(this.data);
       next.conversations[key] = {
         ...entry,
         followUpAt: null,
         followUpMinutes: null,
         followUpStatus: "needs_time",
+        followupShouldFollowUp: null,
         nextAttemptAt: null,
         lastError: typeof message === "string" ? message.slice(0, 300) : null,
       };
@@ -452,19 +491,43 @@ export class ChatExitState {
     });
   }
 
-  async completeFollowUp(key, patch = {}) {
+  async completeFollowUp(key, patch = {}, expectedTerminatedAt = null) {
     return this._locked(async () => {
       const entry = this.data.conversations[key];
       if (!entry) return null;
+      if (
+        expectedTerminatedAt &&
+        entry.terminatedAt !== normalizeTime(expectedTerminatedAt)
+      ) {
+        return null;
+      }
       const status = FOLLOW_UP_STATUSES.has(patch.status)
         ? patch.status
         : "scheduled";
       const next = structuredClone(this.data);
+      const hasFollowUpReason = Object.hasOwn(patch, "followupReason");
+      const hasShouldFollowUp = Object.hasOwn(patch, "followupShouldFollowUp");
       next.conversations[key] = {
         ...entry,
         followUpStatus: status,
         nextAttemptAt: optionalTime(patch.nextAttemptAt),
         sentAt: optionalTime(patch.sentAt),
+        ...(hasFollowUpReason
+          ? {
+              followupReason:
+                typeof patch.followupReason === "string"
+                  ? patch.followupReason.trim().slice(0, 200)
+                  : "",
+            }
+          : {}),
+        ...(hasShouldFollowUp
+          ? {
+              followupShouldFollowUp:
+                typeof patch.followupShouldFollowUp === "boolean"
+                  ? patch.followupShouldFollowUp
+                  : null,
+            }
+          : {}),
         lastError:
           typeof patch.lastError === "string" ? patch.lastError.slice(0, 300) : null,
       };
@@ -474,29 +537,42 @@ export class ChatExitState {
     });
   }
 
-  async rescheduleFollowUp(key, nextAttemptAt, lastError = null) {
+  async rescheduleFollowUp(
+    key,
+    nextAttemptAt,
+    lastError = null,
+    expectedTerminatedAt = null,
+  ) {
     return this.completeFollowUp(key, {
       status: "scheduled",
       nextAttemptAt,
       lastError,
-    });
+    }, expectedTerminatedAt);
   }
 
-  async markFollowUpSent(key, sentAt = new Date().toISOString()) {
+  async markFollowUpSent(
+    key,
+    sentAt = new Date().toISOString(),
+    expectedTerminatedAt = null,
+  ) {
     return this.completeFollowUp(key, {
       status: "sent",
       sentAt,
       nextAttemptAt: null,
       lastError: null,
-    });
+    }, expectedTerminatedAt);
   }
 
-  async markFollowUpSkipped(key, lastError = null) {
+  async markFollowUpSkipped(
+    key,
+    lastError = null,
+    expectedTerminatedAt = null,
+  ) {
     return this.completeFollowUp(key, {
       status: "skipped",
       nextAttemptAt: null,
       lastError,
-    });
+    }, expectedTerminatedAt);
   }
 
   async snapshot() {
@@ -504,7 +580,7 @@ export class ChatExitState {
   }
 }
 
-export const CHAT_EXIT_SYSTEM_PROMPT = `你是 Alice 的私聊结束判断器。判断用户最后一条消息是否表示“这次先聊到这里、要离开、暂时不想继续”。
+export const CHAT_EXIT_SYSTEM_PROMPT = `你是 Alice 的私聊结束判断器。判断用户最后一条消息是否表示“这次先聊到这里、要离开、暂时不想继续”，并先判断之后是否真的有合适理由主动回访，再决定多久回访。
 
 只根据聊天内容判断，不要因为消息短就判结束，也不要因为出现“好/嗯/哦”就判结束。必须结合最近上下文，确认用户没有继续话题、没有提问、也没有要求 Alice 做事。
 
@@ -529,13 +605,16 @@ export const CHAT_EXIT_SYSTEM_PROMPT = `你是 Alice 的私聊结束判断器。
 - 如果用户最后一条是没有文字的表情包，但表情摘要或标签明确表示晚安、再见、去睡、离开等结束含义，可以判 true；普通可爱、搞笑、打招呼表情仍然判 false。
 - 如果判断结束，sticker_mood 要从当前可用表情标签中选一个最贴合收尾气氛的短标签；没有合适的就写“可爱”。不结束时填空字符串。
 - 晚安/去睡了优先“困倦”，好吧/收到优先“可爱”或“呆萌”，不想聊了/算了优先“小情绪”。
-- 如果判断结束，还要估算多久后适合主动找对方，输出 followup_minutes（必须是 5-1440 的整数分钟）：
+- 先判断 should_follow_up。只有上下文里有未完成话题、明确的后续事件、用户状态变化，或确实自然的关心理由时才为 true；没有理由、对方明确不想联系、连续多次未回复时可以为 false。
+- should_follow_up 为 true 时，followup_reason 写一句简短的自然语言依据，说明要接续什么话题或事件；不要复述敏感信息，不要写成“主动问候”这种机械理由。
+- 如果判断结束且应该回访，还要估算多久后适合主动找对方，输出 followup_minutes（必须是 5-1440 的整数分钟）：
   晚安/去睡了约 360-600；去吃饭/洗澡/忙一会儿约 20-90；等下再说/晚点聊约 10-60；
   好吧/收到/知道了约 120-480；不想聊了/让我静静/烦约 480-1440；拜拜/下次聊约 360-1440。
-  必须结合上下文给出一个合法整数，不能省略、不能输出 0、负数或超过 1440；不确定也要选一个最合适的值。
+- should_follow_up 为 false 时，followup_reason 写空字符串，followup_minutes 输出 null。
+- should_follow_up 为 true 时必须给出合法整数分钟，不能输出 0、负数或超过 1440。
 
 只输出合法 JSON，不要 Markdown，不要额外解释：
-{"end_chat": true, "confidence": 0.0, "reason": "简短理由", "sticker_mood": "可爱", "followup_minutes": 120}`;
+{"end_chat": true, "confidence": 0.0, "reason": "简短理由", "sticker_mood": "可爱", "should_follow_up": true, "followup_reason": "接续的具体话题或事件", "followup_minutes": 120}`;
 
 const STICKER_EXIT_PATTERN =
   /晚安|睡了|去睡|睡觉|拜拜|再见|告辞|我走了|先走了|下线|溜了|回聊|下次聊|明天聊|good\s*night|\bbye\b|see\s*you/iu;
@@ -573,7 +652,6 @@ function stickerLabel(sticker) {
 export function buildChatExitMessages({
   text,
   history = [],
-  userId,
   stickerTags = [],
   sticker = null,
 }) {
@@ -597,7 +675,6 @@ export function buildChatExitMessages({
     );
   }
   const content = [
-    `说话人 QQ：${userId || "未知"}`,
     `当前可用表情标签：${tags.length ? tags.join("、") : "可爱、无语、开心"}`,
     `最近对话：\n${recent || "（无）"}`,
     ...lastMessage,
@@ -611,7 +688,7 @@ export function buildChatExitMessages({
 
 export function parseChatExitDecision(text) {
   const parsed = extractJson(text);
-  if (!parsed) return null;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const rawEnd = parsed.end_chat ?? parsed.endChat ?? parsed.leave;
   const endChat = rawEnd === true || rawEnd === "true";
   const numeric = Number(parsed.confidence);
@@ -624,10 +701,32 @@ export function parseChatExitDecision(text) {
     typeof rawMood === "string" ? rawMood.trim().replace(/\s+/gu, " ").slice(0, 30) : "";
   const rawFollowUp =
     parsed.followup_minutes ?? parsed.followUpMinutes ?? parsed.followupMinutes;
-  const followUpNumber = Number(rawFollowUp);
+  const followUpNumber = rawFollowUp === null ? null : Number(rawFollowUp);
   const followUpMinutes =
-    Number.isInteger(followUpNumber) && followUpNumber >= 0 ? followUpNumber : null;
-  return { endChat, confidence, reason, stickerMood, followUpMinutes };
+    followUpNumber !== null &&
+    Number.isInteger(followUpNumber) &&
+    followUpNumber >= 0
+      ? followUpNumber
+      : null;
+  const rawShouldFollowUp =
+    parsed.should_follow_up ?? parsed.shouldFollowUp ?? parsed.followup_should;
+  const shouldFollowUp =
+    typeof rawShouldFollowUp === "boolean" ? rawShouldFollowUp : null;
+  const rawFollowUpReason =
+    parsed.followup_reason ?? parsed.followUpReason ?? parsed.followupReason;
+  const followupReason =
+    typeof rawFollowUpReason === "string"
+      ? rawFollowUpReason.trim().replace(/\s+/gu, " ").slice(0, 200)
+      : "";
+  return {
+    endChat,
+    confidence,
+    reason,
+    stickerMood,
+    shouldFollowUp,
+    followupReason,
+    followUpMinutes,
+  };
 }
 
 export class ChatExitManager {
@@ -716,7 +815,6 @@ export class ChatExitManager {
       messages: buildChatExitMessages({
         text,
         history,
-        userId: event.userId,
         stickerTags,
         sticker: info,
       }),
@@ -782,13 +880,22 @@ export class ChatExitManager {
     let followUpMinutes = null;
     let followUpAt = null;
     let lastError = null;
+    const declined = decision.shouldFollowUp === false;
     if (followUp.enabled && event.channel === "onebot") {
       const requested = decision.followUpMinutes;
       const valid =
         Number.isInteger(requested) &&
         requested >= followUp.minMinutes &&
         requested <= followUp.maxMinutes;
-      if (valid) {
+      if (declined) {
+        followUpStatus = "skipped";
+        lastError = "followup_declined";
+      } else if (valid && decision.shouldFollowUp !== true) {
+        // Missing should_follow_up is the legacy time-only contract.
+        followUpStatus = "scheduled";
+        followUpMinutes = requested;
+        followUpAt = new Date(Date.parse(at) + requested * 60_000).toISOString();
+      } else if (valid && decision.followupReason) {
         followUpStatus = "scheduled";
         followUpMinutes = requested;
         followUpAt = new Date(Date.parse(at) + requested * 60_000).toISOString();
@@ -807,6 +914,8 @@ export class ChatExitManager {
         followUpAt,
         followUpMinutes,
         followUpStatus,
+        followupReason: decision.followupReason,
+        followupShouldFollowUp: declined ? false : decision.shouldFollowUp,
         lastError,
       });
     } catch (error) {
@@ -832,6 +941,8 @@ export class ChatExitManager {
       followUpAt,
       followUpMinutes,
       followUpStatus,
+      followupReason: decision.followupReason,
+      shouldFollowUp: decision.shouldFollowUp,
       needsTime: Boolean(entry && followUpStatus === "needs_time"),
     };
   }

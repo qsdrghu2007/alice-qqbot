@@ -101,10 +101,38 @@ Client network socket disconnected before secure TLS connection was established
 ## 上下文缓存命中低
 
 - 主聊天应保持：静态系统提示词 → 最近历史 → 最后一条 user（动态记忆/表情状态 + 当前用户文本）。
-- 不要把长期记忆正文、表情库数量、上次发表情时间、当前时间、用户文本放进 system 前缀。
+- 安全画像、ACL 上下文、结构化事项、用户情绪、共同梗和全局情绪放在最后一条 user；不要把长期记忆正文、表情库数量、上次发表情时间、当前时间或用户文本放进 system 前缀。
+- 表达审校的 system 保持静态，短 user 请求只含当前文本、草稿和无原文习惯标记；不要为省一次请求把审校内容塞进主聊天 system 前缀。
 - 工具列表和 `sticker_catalog`/`send_sticker` 描述尽量保持静态；主回复不再注入标签，需要时由工具返回全量标签。
 - 修改 `ai.systemPrompt`、`STYLE_CONTRACT` 或工具 schema 后，缓存会自然失效一次。
 - 历史超过 `ai.historyMessages` 后会滚动截断，前缀会变化，这是窗口限制。
+
+## 短期话题、未完成事项或偏好没有延续
+
+- 检查 `data/config.json` 的 `conversationState.enabled/reviewEnabled` 是否为 `true`，以及 `ttlHours` 是否过短。
+- 话题和未完成事项按来源 ACL：私聊只能看到本人私聊与本人参与群的自有话题；群只看到本人在当前群的自有话题。安全画像可跨同账号私聊/群共享，但私聊来源不会进入群视图。
+- 空 `topic/unfinished/preference` 表示保留旧值；清除必须由审校显式返回字面 `true` 的 `clear_topic/clear_unfinished/clear_preference`。
+- 只有进入发送提交边界才更新；被新消息打断的草稿不会留下状态。
+- 查看 `data/conversation-state.json` 是否损坏并被隔离为 `conversation-state.json.corrupt-*`。
+
+## 回复审校增加延迟或偶尔没有生效
+
+- 审校只为非工具最终草稿调用一次；工具、联网和外发回合会跳过，这是为了不改写动作结果。
+- AI Key/Base URL、`conversationState.judgeModel` 和 `judgeTimeoutMs` 会决定是否成功；失败时使用原稿且不更新状态。
+- 审校没有历史原文，只收到连续问句、重复开头、相似度、表情重复等聚合标记；这些标记能提示常见重复习惯，但审校模型仍可能判断失误。
+- 关闭 `reviewEnabled` 只用于排障；关闭后不再更新短期话题/事项/偏好和全局情绪。
+
+## 全局情绪看起来串会话
+
+- 这是有意设计：全局情绪由所有会话共享，但只包含抽象枚举和四个数值，不保存账号、群号、原文或来源描述。
+- 情绪默认 24 小时向中性衰减；它只影响轻微语气，不代表真实情感或对某个用户的评价。
+- 当前只在普通聊天提交时更新；聊天结束、回访、空间任务和工具回合不会更新。
+- 成功导入会重置全局情绪；单个私聊的 `/reset` 只清该会话短期状态，不影响共享情绪。
+
+## 用户情绪看起来持续太久
+
+- 用户情绪与全局情绪是两层数据。用户情绪只属于对应 ACL 上下文，默认 6 小时 TTL，无关寒暄会保留、换题会减弱，不会镜像成 Alice 的全局情绪。
+- 如果它在群聊中出现，检查是否来自当前发送者在该群的上下文；其他群成员和私聊来源本应被 `visibleContext()` 过滤。
 
 ## 终止后没有主动回访
 
@@ -113,14 +141,14 @@ Client network socket disconnected before secure TLS connection was established
 - 查看 `data/chat-state.json` 的 `followUpStatus`、`followUpAt`、`nextAttemptAt` 和 `lastError`。
 - 如果当前是 23:00–08:00，回访会顺延到安静时段结束。
 - 用户提前发来任意私聊消息会取消回访。
-- 失败/离线/暂停会保留任务并重试，不会丢弃。
+- 失败/离线/暂停会按 `retryDelayMinutes` 重试，最多 3 次后标记 `skipped`。
 
 ## 主动回访时间太晚或太早
 
 - 检查 AI 返回的 `followup_minutes` 是否合理。
 - 检查 `followUp.minMinutes`（至少 5）和 `maxMinutes`。
 - 夜间顺延受 `followUp.quietHours` 和 `followUp.timezone` 控制。
-- AI 没返回有效分钟数时不会使用默认值，而是标记 `needs_time`，后台立即带最近 20 条上下文连续重选；AI 请求失败则本次跳过。
+- AI 没返回有效分钟数时不会使用默认值，而是标记 `needs_time`，后台立即带最近 20 条上下文重选，最多 3 次；请求失败或仍不合法则本次跳过。
 
 ## 主动回访一直重试
 
@@ -131,7 +159,7 @@ Client network socket disconnected before secure TLS connection was established
 - 机器人是否暂停、演示模式或没有 AI Key。
 - 模型生成是否超时/返回空文本。
 - 发送是否被策略或适配器拒绝。
-- 失败会按 `followUp.retryDelayMinutes` 重试，不设过期。
+- 到期检查/生成/发送失败会按 `followUp.retryDelayMinutes` 重试，最多 3 次，之后标记 `skipped`。
 
 ## 用户回来了还收到回访
 
@@ -235,6 +263,7 @@ Client network socket disconnected before secure TLS connection was established
 
 - 只有 OneBot 和官方 QQ 会合并；网页本机聊天保持即时，不会合并。
 - 合并规则是“最后一条消息后等待 `inputDelayMs` 没有新消息”；如果一直在发，会一直推迟。
+- 明显未完句会多等最多约 1 秒，并有批次硬上限；纯 ACK 在生成期作为补充保留，abort 后到达的 ACK 会排在引发中断的新消息之后。
 - `inputDelayMs`、AI 生成、搜索/抓取、打字 delay 期间的新消息会打断当前轮并重新合并；这是预期行为。
 - 发送接口调用后不再中断，新消息属于下一批；已发送的回复无法撤回。
 - 查看终端是否有 `inbound skipped: cooldown`。如果出现，说明仍在旧版本：入站消息被 `policy.cooldownMs` 丢弃；当前版本已移除入站冷却，`cooldownMs` 只限制外发操作。
@@ -242,6 +271,13 @@ Client network socket disconnected before secure TLS connection was established
 - 如果仍然只回一条，检查 `data/store.json` 对应会话最后几条：正常应是一条合并后的 `user` 加一条 `assistant`，不应出现未发送的 assistant 草稿。
 - 历史写入发生在发送边界；如果进程在提交后、真正发出前退出，历史可能多一条未送达回复。重启后不要把旧草稿补写回去。
 - 修改 `src/message-batcher.js` 的静默时间后需要重启 Alice。
+
+## 分段消息顺序异常或只收到第一段
+
+- 分段只对 QQ/OneBot 长纯文本生效，最多两段；代码、URL、列表/表格、图片/表情、动作结果和回访不分段。
+- 后续消息到来会取消尚未开始的 delay 或段间停顿，但已调用 adapter 的首段无法撤回。
+- 第二段发送失败时系统保留首段并停止剩余发送，不会重试失败段；查看 `test/reply-flow.test.js` 与 `test/delivery.test.js`。
+- 打开配置检查 `replyDelay.enabled`；关闭时整组分段逻辑也关闭。`replyPacing` 只接受文件配置。
 
 ## 空间评论不触发或失败
 

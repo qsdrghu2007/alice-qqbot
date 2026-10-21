@@ -3,14 +3,19 @@ import { fileURLToPath } from "node:url";
 
 import { OneBotAdapter } from "./adapters/onebot.js";
 import { QQAdapter } from "./adapters/qq.js";
+import { chat as aiChat } from "./ai.js";
 import { Autonomy } from "./autonomy.js";
 import { ChatActivityTracker, IdleExitScheduler } from "./chat-activity.js";
 import { ChatExitManager } from "./chat-exit.js";
 import { defaultConfig, loadConfig, saveConfig } from "./config.js";
+import { ConversationState } from "./conversation-state.js";
 import {
   ConversationDeliveryQueue,
   calculateReplyDelay,
   conversationDeliveryKey,
+  deliverPlannedReply,
+  planReplySegments,
+  segmentReply,
 } from "./delivery.js";
 import { Engine } from "./engine.js";
 import { FollowUpScheduler } from "./follow-up.js";
@@ -18,6 +23,7 @@ import { MemoryManager } from "./memory.js";
 import {
   BatchCancelledError,
   MessageBatcher,
+  eventHistoryText,
   isBatchCancelled,
   sleepWithSignal,
 } from "./message-batcher.js";
@@ -27,6 +33,7 @@ import { createWebServer, listenLocal } from "./server.js";
 import { StickerLibrary } from "./stickers.js";
 import { Store } from "./store.js";
 import { TypingIndicator } from "./typing.js";
+import { UserUnderstanding } from "./user-understanding.js";
 import { WebSearchClient } from "./web-search.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -73,6 +80,274 @@ function safeLog(logger, level, message, error) {
   }
 }
 
+export function createReplyFlow({
+  getConfig,
+  engine,
+  delivery,
+  typing,
+  activity,
+  logger = console,
+  sleep = sleepWithSignal,
+  random = Math.random,
+}) {
+  if (typeof getConfig !== "function") throw new TypeError("getConfig 必须是函数");
+  if (!engine || typeof engine.handle !== "function") {
+    throw new TypeError("engine 必须提供 handle");
+  }
+  if (!delivery || typeof delivery.enqueue !== "function") {
+    throw new TypeError("delivery 必须提供 enqueue");
+  }
+  if (!typing || typeof typing.start !== "function") {
+    throw new TypeError("typing 必须提供 start");
+  }
+  if (typeof sleep !== "function") throw new TypeError("sleep 必须是函数");
+  if (typeof random !== "function") throw new TypeError("random 必须是函数");
+
+  function conversationAllowed(event, policy) {
+    const allowedUsers = Array.isArray(policy?.allowedUsers) ? policy.allowedUsers : [];
+    const allowedGroups = Array.isArray(policy?.allowedGroups) ? policy.allowedGroups : [];
+    if (allowedUsers.length && !allowedUsers.includes(event.userId)) return false;
+    if (
+      event.scope === "group" &&
+      allowedGroups.length &&
+      !allowedGroups.includes(event.groupId)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  async function deliverReply(
+    adapter,
+    event,
+    reply,
+    {
+      onStatus,
+      beforeSend,
+      afterSegmentSent,
+      delayMs: delayOverride,
+      segmentation = true,
+      signal = null,
+    } = {},
+  ) {
+    const notify = (status, extra = {}) => {
+      try {
+        onStatus?.(status, extra);
+      } catch {
+        // Status callbacks must not break sending.
+      }
+    };
+    const latest = getConfig();
+    if (latest.policy?.paused || !conversationAllowed(event, latest.policy)) {
+      notify("suppressed");
+      return { status: "suppressed", sentSegments: [] };
+    }
+    const segmentSettings = latest.replyPacing ?? {};
+    const planned =
+      segmentation && latest.replyDelay?.enabled !== false
+        ? planReplySegments(reply, { event, settings: segmentSettings })
+        : [{ index: 0, total: 1, text: String(reply?.text ?? "") }];
+    const delayMs =
+      Number.isFinite(delayOverride) && delayOverride >= 0
+        ? delayOverride
+        : calculateReplyDelay(segmentReply(reply, planned[0]), latest.replyDelay, {
+            random,
+          });
+    notify("delayed", { delayMs });
+    const outcome = await deliverPlannedReply({
+      queue: delivery,
+      key: conversationDeliveryKey(event),
+      event,
+      reply,
+      segments: planned,
+      delayMs,
+      signal,
+      send: (target, segmentReply) => adapter.send(target, segmentReply),
+      isAllowed: () => {
+        const current = getConfig();
+        return !current.policy?.paused && conversationAllowed(event, current.policy);
+      },
+      pauseBetween: (segmentIndex) =>
+        sleep(
+          calculateReplyDelay(
+            segmentReply(reply, planned[segmentIndex]),
+            latest.replyDelay,
+            { random },
+          ),
+          signal,
+        ),
+      beforeFirstSend: beforeSend,
+      afterSegmentSent,
+      onStatus: notify,
+    });
+    if ((outcome?.sentSegments?.length ?? 0) > 0) {
+      try {
+        if (reply?.chatEnded) {
+          await activity.clear(event);
+        } else {
+          const current = getConfig();
+          await activity.noteBot(event, {
+            idleMinutes: current.chatExit?.idleMinutes ?? 10,
+          });
+        }
+      } catch (error) {
+        safeLog(logger, "warn", "chat activity update failed", error);
+      }
+    }
+    return outcome;
+  }
+
+  async function processEvent(
+    adapter,
+    event,
+    {
+      signal = null,
+      deferCommit = false,
+      onBeforeSend = null,
+      onStatus = null,
+      getSupplements = null,
+      markSupplementsCommitted = null,
+    } = {},
+  ) {
+    if (signal?.aborted) throw new BatchCancelledError();
+    const stopTyping = typing.start(event);
+    try {
+      const latest = getConfig();
+      if (latest.policy?.paused || !conversationAllowed(event, latest.policy)) {
+        return { status: "suppressed" };
+      }
+      if (signal?.aborted) throw new BatchCancelledError();
+
+      const reply = await engine.handle(event, { signal, deferCommit });
+      if (signal?.aborted) throw new BatchCancelledError();
+      let supplementsCommitted = false;
+      const supplementTexts = () =>
+        supplementsCommitted
+          ? []
+          : (getSupplements?.() ?? []).map(eventHistoryText);
+      const commitDelivered = async ({
+        assistantText = null,
+        userTexts = [],
+        final = false,
+      } = {}) => {
+        if (typeof engine.commitDeliveredTurn === "function") {
+          await engine.commitDeliveredTurn(reply, {
+            assistantText,
+            userTexts,
+            final,
+          });
+          return true;
+        }
+        if (
+          final &&
+          userTexts.length === 0 &&
+          assistantText === (reply?.turn?.assistantText ?? null)
+        ) {
+          return engine.commitTurn(reply);
+        }
+        throw new Error("Engine 未提供分段历史提交接口");
+      };
+      const commitFirst = async (assistantText, final) => {
+        const userTexts = supplementTexts();
+        supplementsCommitted = true;
+        await commitDelivered({ assistantText, userTexts, final });
+        if (userTexts.length) markSupplementsCommitted?.();
+      };
+      if (reply?.duplicate || reply?.suppressed) {
+        if (deferCommit) {
+          if (signal?.aborted) throw new BatchCancelledError();
+          onBeforeSend?.();
+          if (signal?.aborted) throw new BatchCancelledError();
+          try {
+            await commitFirst(null, true);
+          } catch (error) {
+            safeLog(logger, "warn", "chat history commit failed", error);
+          }
+        }
+        if (reply?.chatEnded) {
+          try {
+            await activity.clear(event);
+          } catch (error) {
+            safeLog(logger, "warn", "chat activity clear failed", error);
+          }
+        }
+        return { status: "suppressed", duplicate: Boolean(reply.duplicate) };
+      }
+
+      let firstSegmentCommitted = false;
+      const outcome = await deliverReply(adapter, event, reply, {
+        signal,
+        onStatus,
+        beforeSend: onBeforeSend
+          ? async () => {
+              if (signal?.aborted) throw new BatchCancelledError();
+              onBeforeSend();
+            }
+          : undefined,
+        afterSegmentSent: deferCommit
+          ? async (segment, { first, last }) => {
+              if (first && !firstSegmentCommitted) {
+                firstSegmentCommitted = true;
+                await commitFirst(segment.text, last);
+              } else {
+                await commitDelivered({
+                  assistantText: segment.text,
+                  userTexts: [],
+                  final: last,
+                });
+              }
+            }
+          : undefined,
+      });
+      if (
+        deferCommit &&
+        !firstSegmentCommitted &&
+        ["failed", "partial", "suppressed"].includes(outcome?.status)
+      ) {
+        if (signal?.aborted) throw new BatchCancelledError();
+        if (outcome?.status === "suppressed") onBeforeSend?.();
+        try {
+          await commitFirst(null, true);
+        } catch (error) {
+          safeLog(logger, "warn", "chat history commit failed", error);
+        }
+      } else if (
+        deferCommit &&
+        firstSegmentCommitted &&
+        ["failed", "partial", "suppressed"].includes(outcome?.status)
+      ) {
+        try {
+          await commitDelivered({
+            assistantText: null,
+            userTexts: [],
+            final: true,
+          });
+        } catch (error) {
+          safeLog(logger, "warn", "chat history finalize failed", error);
+        }
+      }
+      if (reply?.chatEnded && outcome?.status === "sent") {
+        try {
+          await activity.clear(event);
+        } catch (error) {
+          safeLog(logger, "warn", "chat activity clear failed", error);
+        }
+      }
+      return outcome;
+    } catch (error) {
+      if (isBatchCancelled(error) || signal?.aborted) {
+        throw new BatchCancelledError();
+      }
+      safeLog(logger, "error", `${event.channel} message handling failed`, error);
+      return { status: "failed" };
+    } finally {
+      stopTyping();
+    }
+  }
+
+  return { conversationAllowed, deliverReply, processEvent };
+}
+
 async function main() {
   const logger = console;
   const controller = createConfigController(await loadConfig(ROOT));
@@ -80,6 +355,8 @@ async function main() {
   const delivery = new ConversationDeliveryQueue();
   const store = new Store(ROOT);
   await store.init();
+  const conversationState = new ConversationState({ root: ROOT, logger });
+  await conversationState.init();
   const webSearch = new WebSearchClient({ getConfig, logger });
   const chatExit = new ChatExitManager({ root: ROOT, logger });
   await chatExit.init();
@@ -106,13 +383,23 @@ async function main() {
     onSent: () => qzoneComments.noteActivity(),
   });
   const memory = new MemoryManager({ getConfig, store, logger });
+  const userUnderstanding = new UserUnderstanding({
+    root: ROOT,
+    getConfig,
+    chat: aiChat,
+    logger,
+  });
+  await userUnderstanding.init();
   let autonomy = null;
   let idleExit = null;
+  let replyFlow = null;
   const followUp = new FollowUpScheduler({
     getConfig,
     state: chatExit.state,
     store,
-    deliver: (event, reply) => deliverReply(onebot, event, reply),
+    conversationState,
+    deliver: (event, reply) =>
+      replyFlow.deliverReply(onebot, event, reply, { segmentation: false }),
     isReady: () => onebot.status().ready === true,
     onTick: async () => {
       await Promise.allSettled([autonomy?.tick(), idleExit?.tick()]);
@@ -143,12 +430,22 @@ async function main() {
       publishQzone: createQzoneToolPublisher(qzone),
       stickers,
       memory,
+      userUnderstanding,
       chatExit,
+      conversationState,
       webSearch,
       qzoneComments,
       fetchHistory: (event, options) => onebot.fetchHistory(event, options),
       logger,
     },
+  });
+  replyFlow = createReplyFlow({
+    getConfig,
+    engine,
+    delivery,
+    typing,
+    activity,
+    logger,
   });
 
   const receivedEvents = new Map();
@@ -161,154 +458,21 @@ async function main() {
     }
   }
 
-  function conversationAllowed(event, policy) {
-    const allowedUsers = Array.isArray(policy?.allowedUsers) ? policy.allowedUsers : [];
-    const allowedGroups = Array.isArray(policy?.allowedGroups) ? policy.allowedGroups : [];
-    if (allowedUsers.length && !allowedUsers.includes(event.userId)) return false;
-    if (
-      event.scope === "group" &&
-      allowedGroups.length &&
-      !allowedGroups.includes(event.groupId)
-    ) {
-      return false;
-    }
-    return true;
-  }
-
-  async function deliverReply(
-    adapter,
-    event,
-    reply,
-    { onStatus, beforeSend, delayMs: delayOverride } = {},
-  ) {
-    const notify = (status, extra = {}) => {
-      try {
-        onStatus?.(status, extra);
-      } catch {
-        // Status callbacks must not break sending.
-      }
-    };
-    const latest = getConfig();
-    if (latest.policy?.paused || !conversationAllowed(event, latest.policy)) {
-      notify("suppressed");
-      return { status: "suppressed" };
-    }
-    const delayMs = Number.isFinite(delayOverride) && delayOverride >= 0
-      ? delayOverride
-      : calculateReplyDelay(reply, latest.replyDelay);
-    notify("delayed", { delayMs });
-    const outcome = await delivery.enqueue(conversationDeliveryKey(event), {
-      delayMs,
-      run: async () => {
-        const current = getConfig();
-        if (current.policy?.paused || !conversationAllowed(event, current.policy)) {
-          notify("suppressed");
-          return { status: "suppressed" };
-        }
-        await beforeSend?.();
-        notify("sending");
-        await adapter.send(event, reply);
-        notify("sent");
-        return { status: "sent" };
-      },
-    });
-    if (outcome?.status === "sent") {
-      try {
-        if (reply?.chatEnded) {
-          await activity.clear(event);
-        } else {
-          const latest = getConfig();
-          await activity.noteBot(event, {
-            idleMinutes: latest.chatExit?.idleMinutes ?? 10,
-          });
-        }
-      } catch (error) {
-        safeLog(logger, "warn", "chat activity update failed", error);
-      }
-    }
-    return outcome;
-  }
-
-  async function processEvent(
-    adapter,
-    event,
-    { signal = null, deferCommit = false, onBeforeSend = null, onStatus = null } = {},
-  ) {
-    if (signal?.aborted) throw new BatchCancelledError();
-    const stopTyping = typing.start(event);
-    try {
-      const latest = getConfig();
-      if (latest.policy?.paused || !conversationAllowed(event, latest.policy)) {
-        return { status: "suppressed" };
-      }
-      if (signal?.aborted) throw new BatchCancelledError();
-
-      const reply = await engine.handle(event, { signal, deferCommit });
-      if (signal?.aborted) throw new BatchCancelledError();
-      if (reply?.duplicate || reply?.suppressed) {
-        if (deferCommit) {
-          try {
-            await engine.commitTurn(reply);
-          } catch (error) {
-            safeLog(logger, "warn", "chat history commit failed", error);
-          }
-        }
-        if (reply?.chatEnded) {
-          try {
-            await activity.clear(event);
-          } catch (error) {
-            safeLog(logger, "warn", "chat activity clear failed", error);
-          }
-        }
-        return { status: "suppressed", duplicate: Boolean(reply.duplicate) };
-      }
-
-      if (deferCommit) {
-        const delayMs = calculateReplyDelay(reply, getConfig().replyDelay);
-        await sleepWithSignal(delayMs, signal);
-        if (signal?.aborted) throw new BatchCancelledError();
-      }
-
-      const outcome = await deliverReply(adapter, event, reply, {
-        onStatus,
-        beforeSend: onBeforeSend
-          ? async () => {
-              if (signal?.aborted) throw new BatchCancelledError();
-              onBeforeSend();
-              try {
-                await engine.commitTurn(reply);
-              } catch (error) {
-                safeLog(logger, "warn", "chat history commit failed", error);
-              }
-            }
-          : undefined,
-        delayMs: deferCommit ? 0 : undefined,
-      });
-      if (reply?.chatEnded && outcome?.status === "sent") {
-        try {
-          await activity.clear(event);
-        } catch (error) {
-          safeLog(logger, "warn", "chat activity clear failed", error);
-        }
-      }
-      return outcome;
-    } catch (error) {
-      if (isBatchCancelled(error) || signal?.aborted) {
-        throw new BatchCancelledError();
-      }
-      safeLog(logger, "error", `${event.channel} message handling failed`, error);
-      return { status: "failed" };
-    } finally {
-      stopTyping();
-    }
-  }
-
   const batcher = new MessageBatcher({
-    handler: async ({ event, context, signal, onBeforeSend }) => {
-      return processEvent(context.adapter, event, {
+    handler: async ({
+      event,
+      context,
+      signal,
+      onBeforeSend,
+      getSupplements,
+      markSupplementsCommitted,
+    }) => {
+      return replyFlow.processEvent(context.adapter, event, {
         signal,
         deferCommit: true,
         onBeforeSend,
+        getSupplements,
+        markSupplementsCommitted,
       });
     },
     silentMs: getConfig().inputDelayMs,
@@ -317,13 +481,13 @@ async function main() {
 
   async function receive(adapter, event) {
     const current = getConfig();
-    if (current.policy?.paused || !conversationAllowed(event, current.policy)) {
+    if (current.policy?.paused || !replyFlow.conversationAllowed(event, current.policy)) {
       return { status: "suppressed" };
     }
 
     if (event.channel !== "local") {
       const result = batcher.enqueue(event, { adapter });
-      if (result.status === "batched") {
+      if (["batched", "supplemented"].includes(result.status)) {
         try {
           await activity.noteUser(event);
         } catch (error) {
@@ -344,7 +508,7 @@ async function main() {
       } catch (error) {
         safeLog(logger, "warn", "chat activity update failed", error);
       }
-      const outcome = await processEvent(adapter, event, {
+      const outcome = await replyFlow.processEvent(adapter, event, {
         onStatus: (status, extra) => rememberEvent(key, { status, ...extra }),
       });
       rememberEvent(key, outcome);
@@ -420,6 +584,8 @@ async function main() {
       qzoneComments,
       autonomy,
       stickers,
+      conversationState,
+      userUnderstanding,
       reconnect,
       configChanged: onConfigChanged,
       logger,
@@ -453,6 +619,7 @@ async function main() {
   await qzoneComments.start();
   await autonomy.start();
   await followUp.start();
+  await userUnderstanding.start();
 
   let closing = false;
   async function shutdown(signal) {
@@ -461,15 +628,7 @@ async function main() {
     console.log(`收到 ${signal}，正在停止…`);
     batcher.stop();
     typing.stopAll();
-    await Promise.allSettled([
-      engine.flushMemory({ timeoutMs: 2000 }),
-      autonomy.stop(),
-      qzoneComments.stop(),
-      followUp.stop(),
-      qq.stop(),
-      onebot.stop(),
-      qzone.stop(),
-    ]);
+    await userUnderstanding.stop();
     if (server) {
       server.closeIdleConnections?.();
       await new Promise((resolve) => {
@@ -481,6 +640,19 @@ async function main() {
         });
       });
     }
+    await Promise.allSettled([
+      autonomy.stop(),
+      qzoneComments.stop(),
+      followUp.stop(),
+      qq.stop(),
+      onebot.stop(),
+      qzone.stop(),
+    ]);
+    await Promise.allSettled([
+      engine.flushMemory({ timeoutMs: 2000 }),
+      conversationState.flush(),
+      userUnderstanding.flush(),
+    ]);
   }
 
   for (const signal of ["SIGINT", "SIGTERM"]) {

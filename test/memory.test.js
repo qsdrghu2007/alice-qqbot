@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { defaultConfig } from "../src/config.js";
 import {
+  MEMORY_JUDGE_SYSTEM_PROMPT,
   MemoryManager,
   buildJudgeMessages,
   explicitMemoryDirective,
@@ -142,6 +143,64 @@ test("memory judge saves important private memories with low-cost AI options", a
   assert.equal(calls[0].maxTokens, 300);
   assert.equal(calls[0].config.temperature, 0.1);
   assert.equal(calls[0].config.model, "memory-model");
+});
+
+test("memory prompt covers incidental stable disclosures without changing cache shape", async (t) => {
+  const { store } = await setup(t);
+  const text = "我住在松涛市，平时骑一辆星环摩托通勤，昨天自己把牌照办好了";
+  const judge = buildJudgeMessages({
+    text,
+    history: [{ role: "user", content: "最近出门方便吗" }],
+    scope: "private",
+    userId: "10001",
+  });
+
+  assert.equal(judge.length, 2);
+  assert.equal(judge[0].role, "system");
+  assert.equal(judge[0].content, MEMORY_JUDGE_SYSTEM_PROMPT);
+  assert.match(judge[0].content, /用户没有要求记忆/u);
+  assert.match(judge[0].content, /闲聊里无意透露/u);
+  assert.match(judge[0].content, /城市级粗粒度/u);
+  assert.match(judge[0].content, /Alice 的猜测或提问/u);
+  assert.match(judge[0].content, /区分“目前在 X”和“常住 X”/u);
+  assert.match(judge[0].content, /车牌号/u);
+  assert.match(judge[0].content, /具体日期、计划、约定、纪念日、考试、出行安排/u);
+  assert.match(judge[0].content, /content 必须保留“计划\/待办\/未完成”语义/u);
+  assert.match(judge[0].content, /仍然只输出一个 JSON 对象/u);
+  assert.match(judge[0].content, /7-8：用户无意披露/u);
+  assert.doesNotMatch(judge[0].content, /松涛市|星环摩托/u);
+  assert.match(judge[1].content, /当前用户消息：\n我住在松涛市/u);
+
+  const requests = [];
+  const config = configured({ memory: { minImportance: 7 } });
+  const manager = new MemoryManager({
+    getConfig: async () => config,
+    store,
+    logger: noopLogger,
+    chat: async (request) => {
+      requests.push(request);
+      return reply({
+        should_remember: true,
+        memory_type: "fact",
+        content: "用户居住在松涛市，拥有已上牌的星环摩托并习惯骑它通勤",
+        importance: 8,
+        reason: "闲聊中稳定且可复用的披露",
+      });
+    },
+  });
+  const key = JSON.stringify(["private-memory", "onebot", "10001"]);
+
+  await manager.afterTurn({ event: event({ text }), memoryKey: key, config });
+
+  const memories = await store.memories(key);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].messages.length, 2);
+  assert.equal(requests[0].messages[0].content, MEMORY_JUDGE_SYSTEM_PROMPT);
+  assert.doesNotMatch(requests[0].messages[0].content, /松涛市|星环摩托/u);
+  assert.match(requests[0].messages[1].content, /松涛市/u);
+  assert.equal(memories.length, 1);
+  assert.equal(memories[0].text, "用户居住在松涛市，拥有已上牌的星环摩托并习惯骑它通勤");
+  assert.equal(memories[0].importance, 8);
 });
 
 test("explicit remember requests bypass the importance threshold and AI judge", async (t) => {

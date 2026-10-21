@@ -23,38 +23,38 @@
 - 修改 `src/`、服务端路由、配置校验或 AI 请求格式后，必须重启 Alice。
 - 修改 `public/` 后刷新浏览器即可，不需要构建。
 
-## 2. 当前部署环境
+## 2. 本地环境示例
 
 项目目录示例：
 
 ```text
-E:\qqbot\qqbot
+C:\Projects\alice-qqbot
 ```
 
 备份目录示例：
 
 ```text
-E:\qqbot\backups\qqbot-YYYYMMDD-HHMMSS
+C:\Backups\alice-qqbot-YYYYMMDD-HHMMSS
 ```
 
-当前部署事实：
+本地运行参考：
 
-- Node.js 24.x（项目要求 >= 22）。
+- Node.js 22 或更高版本（以 `package.json` 为准）。
 - 运行平台：Windows；CI 同时覆盖 macOS 和 Windows。
 - 唯一运行依赖：`ws`。
 - Alice 控制台默认端口：`3210`。
 - OneBot/NapCat 正向 WebSocket 默认端口：`3001`。
-- NapCat WebUI 默认端口：`6099`；实际监听地址以 `napcat/.../config/webui.json` 为准，当前 `host` 为 `::`，建议改为 `127.0.0.1` 并启用强 token/访问控制。
-- NapCat 安装在 `napcat/NapCat.52230.Shell`，当前为 NapCat v4.18.38。
-- 当前人格名：`Alice`；默认模型：`deepseek-flash`；默认思考强度：`high`。
+- NapCat WebUI 默认端口：`6099`；实际监听地址以本地配置为准，应绑定 `127.0.0.1` 并启用强 token/访问控制。
+- NapCat 安装目录和版本由本地部署决定；仓库要求把运行目录放在被忽略的 `napcat/` 下。
+- 默认人格名：`Alice`；默认模型和思考强度以 `data/config.json` 为准。
 
-这些是部署事实，不是代码不变量。维护时以 `data/config.json` 和实际进程为准。
+这些是本地环境示例，不是代码不变量。维护时以 `data/config.json` 和实际进程为准。
 
 ### 检查当前运行状态（Windows）
 
 ```powershell
 Get-CimInstance Win32_Process | Where-Object {
-  $_.CommandLine -like "*E:\qqbot\qqbot*" -or
+  $_.CommandLine -like "*C:\Projects\alice-qqbot*" -or
   $_.CommandLine -like "*src/index.js*" -or
   $_.Name -eq "NapCatWinBootMain.exe"
 } | Select-Object ProcessId,ParentProcessId,Name,CommandLine
@@ -103,14 +103,17 @@ src/config.js                默认配置、深合并、校验、密钥保留、
 src/store.js                 聊天历史、v2 长期记忆、迁移/导入/导出/备份
 src/engine.js                事件编排、会话串行、记忆注入、工具调用、外发权限、表情集成
 src/memory.js                AI 长期记忆判断、明确请求保存、JSON 解析、异步队列
+src/user-understanding.js    私聊每日理解、7 日汇总、可信身份共享画像与定时调度
+src/conversation-state.js    安全跨场景画像、ACL 上下文、事项/情绪/共同梗、全局拟人情绪、TTL
+src/conversation-style.js    无原文的跨轮回复习惯统计
 src/chat-exit.js             私聊结束判断、终止/回访状态、v1→v2 迁移
-src/follow-up.js             主动回访调度、上下文生成、夜间顺延、重试
-src/delivery.js              打字延迟计算、纯表情包判断、按会话发送队列
-src/message-batcher.js       连续消息合并、输入前静默、打断、发送边界与批次状态
+src/follow-up.js             可见上下文回访、到期检查、夜间顺延、重试
+src/delivery.js              打字延迟、分段计划与可取消的按会话发送队列
+src/message-batcher.js       语义等待、ACK 补充、连续消息合并、打断与批次状态
 src/search.js                关键词搜索、中文二元组匹配、打分与排序
 src/web-search.js            DeepSeek 网页搜索/抓取、结果归一化、正文截断与错误映射
 src/typing.js                OneBot 私聊“正在输入”续期、计数与按会话隔离
-src/style.js                 引擎和回访共用的短回复风格约束
+src/style.js                 场景长度、审校和跨轮习惯约束
 src/ai.js                    OpenAI 兼容聊天、图片、工具、思考强度、错误映射
 src/server.js                本地 HTTP、鉴权、静态文件、API、表情图片流
 src/stickers.js              表情库、自动收藏、AI 审核、手动上传、发送选择
@@ -218,6 +221,28 @@ releases/                    历史发布包
 | `memory.maxInjected` | `10` | 每轮最多注入多少条记忆；`0` 表示不注入。 |
 | `memory.judgeModel` | 空 | 记忆判断模型；空表示使用 `ai.model`。 |
 | `memory.judgeTimeoutMs` | `15000` | 记忆判断超时，1000..60000。 |
+| `conversationState.enabled` | `true` | 是否读取并注入安全画像、ACL 上下文、用户情绪和全局拟人情绪。 |
+| `conversationState.reviewEnabled` | `true` | 是否对非工具最终草稿做独立表达审校。 |
+| `conversationState.judgeModel` | 空 | 审校模型；空表示使用 `ai.model`。 |
+| `conversationState.judgeTimeoutMs` | `8000` | 审校超时，1000..60000。 |
+| `conversationState.maxEntries` | `200` | 最多保留的上下文与画像条目，20..2000。 |
+| `conversationState.ttlHours` | `72` | 上下文条目的最终过期兜底，1..720 小时。 |
+| `conversationState.globalEmotionTtlHours` | `24` | 全局拟人情绪向中性衰减并过期的时长，1..168 小时。 |
+| `conversationState.topicTtlHours` | `24` | 当前话题 TTL，1..168 小时。 |
+| `conversationState.unfinishedTtlHours` | `168` | 开放及已完成事项 TTL，1..720 小时。 |
+| `conversationState.userEmotionTtlHours` | `6` | 用户短期情绪 TTL，1..72 小时。 |
+| `conversationState.commonMemeTtlHours` | `168` | 已确认共同梗 TTL，1..720 小时。 |
+| `conversationState.profileTtlHours` | `720` | 安全跨场景画像 TTL，24..8760 小时。 |
+| `userUnderstanding.enabled` | `true` | 是否记录私聊每日理解、生成 7 日汇总并在聊天前注入安全画像。 |
+| `userUnderstanding.hour` / `minute` | `0` / `10` | 每日检查时间，默认 `Asia/Shanghai` 00:10。 |
+| `userUnderstanding.timezone` | `Asia/Shanghai` | IANA 时区；启动和保存配置时用 Intl 校验。 |
+| `userUnderstanding.judgeModel` | 空 | 用户理解模型；空表示使用 `ai.model`。 |
+| `userUnderstanding.judgeTimeoutMs` | `15000` | 判断请求超时，1000..60000。 |
+| `userUnderstanding.maxInputChars` | `16000` | 每个用户每日送审文本上限，1000..100000。 |
+| `userUnderstanding.maxDailyMessages` | `200` | 每个用户每日送审及保留消息上限，10..1000。 |
+| `userUnderstanding.maxUsers` | `200` | 最多保留的用户理解条目，1..5000。 |
+| `userUnderstanding.retentionDays` | `35` | 每日材料/摘要保留天数，7..3650。 |
+| `userUnderstanding.maxInjectedChars` | `1200` | 画像 system 最大注入字符数，200..4000。 |
 | `webSearch.enabled` | `true` | 是否向模型提供 DeepSeek 联网搜索/抓取工具；总开关。 |
 | `webSearch.searchEnabled` | `true` | 是否提供 `web_search`。 |
 | `webSearch.fetchEnabled` | `true` | 是否提供 `web_fetch`。 |
@@ -227,7 +252,7 @@ releases/                    历史发布包
 | `webSearch.maxContentChars` | `6000` | 单页正文最多保留字符数，1000..20000。 |
 | `maxToolCallsPerTurn` | `6` | 每轮最多工具调用，1..10；轮次上限会为最终回复留出一轮。 |
 | `inputDelayMs` | `2000` | 输入前延迟，1..10000ms；独立于 `replyDelay`，修改后需重启 Alice。 |
-| `replyDelay.enabled` | `true` | 是否对 QQ/OneBot 回复增加发送前延迟。 |
+| `replyDelay.enabled` | `true` | 是否对 QQ/OneBot 回复增加发送前延迟；关闭时也禁用分段和段间停顿。 |
 | `replyDelay.baseMs` | `500` | 基础延迟，0..10000。 |
 | `replyDelay.msPerChar` | `120` | 每个可见字符增加，0..1000。 |
 | `replyDelay.maxMs` | `0` | 最大延迟，0..60000；`0` 表示不限制。 |
@@ -244,10 +269,14 @@ releases/                    历史发布包
 | `followUp.timezone` | `Asia/Shanghai` | 安静时段和当前时间使用的时区。 |
 | `followUp.retryDelayMinutes` | `5` | 回访生成/发送失败后的重试间隔。 |
 | `persona.name` | `Alice` | 人格名。 |
-| `identityLinks` | `{}` | 私聊身份到共享记忆身份的映射。 |
+| `persona.preferences` | 默认数组 | Alice 自己的稳定喜好，最多 8 条、每条 1..120 字，写入静态 system。 |
+| `persona.opinions` | 默认数组 | Alice 自己的稳定观点，最多 8 条、每条 1..120 字，写入静态 system。 |
+| `identityLinks` | `{}` | 可信身份到共享记忆和安全跨场景画像的映射；消息历史仍按会话隔离。 |
 | `demo` | `true` | 演示模式；不会调用 AI、外发、自动收藏、收尾判断、主动回访、定时空间或空间评论。 |
 
 注意：`data/config.json` 是当前运行配置，可能包含与默认值不同的用户设置。修改默认值不会自动覆盖已有配置。
+
+`userUnderstanding` 从功能启用后开始积累成功提交的私聊消息，不回填启用前的历史。它与既有回复审校、`ConversationState` 安全画像和全局拟人情绪是独立数据链路；本功能不改变后者的审校、保留、衰减或清理行为。
 
 ### 新增配置项检查清单
 
@@ -265,6 +294,10 @@ releases/                    历史发布包
 | `data/config.json` | `src/config.js` | 运行配置，含密钥。 |
 | `data/store.json` | `src/store.js` | version 2：`conversations`、`memories`；记忆含 `type/importance/source/createdAt/updatedAt/lastAccessedAt`。 |
 | `data/store.json` 备份 | `src/store.js` | 导入时写入 `data/backups/`；v1 迁移前写 `store-v1-*.json`。 |
+| `data/conversation-state.json` | `src/conversation-state.js` | version 1：SHA-256 身份/上下文 key、安全画像、结构化事项、用户情绪、共同梗、无原文习惯统计和全局情绪枚举/数值；不含账号、群号、原文或来源描述。 |
+| `data/conversation-state.json.corrupt-*` | `src/conversation-state.js` | 损坏会话状态的隔离文件；之后从空状态重新开始。 |
+| `data/user-understanding.json` | `src/user-understanding.js` | version 1：SHA-256 身份 key、私聊每日裁剪材料、安全摘要/枚举、7 日汇总和失败重试；不含账号或群号。 |
+| `data/user-understanding.json.corrupt-*` | `src/user-understanding.js` | 损坏用户理解的隔离文件；之后从空状态重新开始。 |
 | `data/chat-state.json` | `src/chat-exit.js` | version 2：私聊终止时间、回访时间、状态和重试信息，按 `channel + scope + conversationId` 隔离。 |
 | `data/chat-activity.json` | `src/chat-activity.js` | 私聊最后用户/Alice 活动时间、空闲截止时间、连续空闲终止次数。 |
 | `data/backups/chat-state-v1-*.json` | `src/chat-exit.js` | v1 → v2 迁移前备份。 |
@@ -286,7 +319,9 @@ releases/                    历史发布包
   -> src/server.js（Bearer + Host/Origin + 静态资源/API）
   -> src/engine.js（会话串行、工具、策略）
   -> src/ai.js（模型请求）
+  -> src/conversation-state.js（短期状态、独立表达审校、全局拟人情绪）
   -> src/memory.js（后台长期记忆判断）
+  -> src/user-understanding.js（私聊每日理解与 7 日汇总）
   -> src/chat-exit.js（私聊主动结束判断）
   -> src/follow-up.js（终止后主动回访）
   -> src/delivery.js（按会话打字延迟和发送队列）
@@ -305,24 +340,42 @@ releases/                    历史发布包
 `src/index.js` 是唯一进程入口：
 
 1. 加载配置。
-2. 初始化 `Store`、`ChatExitManager` 和 `StickerLibrary`。
+2. 初始化 `Store`、`ConversationState`、`UserUnderstanding`、`ChatExitManager` 和 `StickerLibrary`。
 3. 构造 `QQAdapter`、`OneBotAdapter`、`QzonePublisher`、`MemoryManager`、`FollowUpScheduler`、`Engine`、`Autonomy`。
-4. 创建本地 HTTP 服务。
+4. 把 `ConversationState` / `UserUnderstanding` 注入 Engine 和 HTTP 服务；导入成功后由服务调用各自的 `resetAll()`。
 5. 启动适配器和自主调度器。
-6. 处理 SIGINT/SIGTERM，短暂等待记忆提取后停止服务。
+6. 处理 SIGINT/SIGTERM：先停消息源和调度器，再 flush 记忆、`ConversationState` 与 `UserUnderstanding`，最后完成退出。
 
 ### 会话与记忆隔离
 
 - 历史 key：`safeKey([channel, scope, conversationId, groupId 或 userId])`。
 - 群记忆 key：`["group-memory", channel, groupId]`；群内共享，所有成员共同影响同一份记忆。
 - 私聊记忆 key：`identityLinks` 命中时用共享身份；否则 `["private-memory", channel, userId]`。
+- 上下文状态 key：对 `channel + scope + conversationId + group/user + sender` 计算 SHA-256；持久文件中不出现原始账号或群号。
+- 可信身份画像 key：同一 channel/userId 在私聊与群共享；`identityLinks` 命中时可跨通道共享。画像只含关系阶段、枚举偏好和边界。
+- 用户理解 key：与短期安全画像相同，同一可信用户私聊/群共享性格枚举；原始私聊和每日摘要按同一 SHA-256 身份 key 本地保存，但永远不注入群。
+- `visibleContext()` ACL：私聊调用者得到共享画像 + 本人私聊和本人参与群的上下文；群调用者只得到共享画像 + 本人在当前群的上下文。私聊来源和其他群成员内容永不进入群视图。
 - 群聊只有被 @ 时才进入 Engine。
 - 表情库是全局共享；发送使用的 `usage.json` 按会话 key 记录。
 - 自动记忆在回复成功后由 `MemoryManager` 异步执行；同一记忆库串行，避免并发重复。
 - 用户明确“记住/记一下/帮我记住/别忘了/备注/存一下”时走快捷路径，重要度 9，不调用判断模型。
 - 普通消息使用 `thinking: disabled`、低 temperature、300 tokens 的判断请求；失败只记日志，不影响回复。
+- 普通闲聊也允许判断模型主动识别用户无意透露的稳定事实，包括粗粒度所在城市、个人拥有的车辆/设备、持续兴趣和明确完成的事件；这些事实只可归因于当前说话人本人，不能从提问、猜测、他人转述或群成员资料推断。计划、约定和未完成事项仍可按原规则保存，但 content 必须明确保留“计划/待办/未完成”语义。
+- 粗粒度城市可以在隐含披露时保存；精确住址、联系方式、车牌号、设备序列号和敏感凭证不能据此扩展或保存。多个相关稳定事实可合并为单条 content，判断输出仍保持单个 JSON 对象。
+- 隐含披露的稳定事实通常评为 7-8 分，说明“没有明确要求记忆”不等于不重要；实际判定仍依赖判断模型，静态测试只验证提示词契约和保存链路。
 - 自动保存只接受重要度 ≥ `memory.minImportance` 的结果；写入时按归一化文本去重，并按 `memory.maxPerKey` 修剪。
 - 提示词只注入当前记忆库中排序靠前的 `memory.maxInjected` 条。
+
+短期状态与长期记忆必须分开维护：
+
+- 每个上下文含话题、结构化 `unfinishedItems`（`open/done/cancelled`）、交流偏好、Alice 语气、用户短期情绪、已确认共同梗、无原文习惯统计和独立过期时间。
+- `unfinished_items` 以规范化文字的稳定 ID 去重；完成同一事项会更新原条目的状态和完成时间，不重复创建。
+- `user_emotion` 只描述用户本轮表达，无关寒暄保留、换题减弱、独立 TTL；不能把用户负面情绪镜像成 Alice 全局情绪。
+- 共同梗要求当前用户原文包含该短语；首次只记 `candidate`，同一短语再次由用户原文出现并被审校识别为共同梗时才暴露为 `confirmed`，不能推测线下共同经历。
+- 关系阶段按不同日期的交互和明确暖意缓慢增长，不按消息条数上涨；昵称、玩笑、话题和联系频率边界只保存安全枚举。
+- 全局情绪只含 `calm/cheerful/playful/tired/stressed/hurt` 枚举及开心、精力、平静、兴趣四个数值；AI 返回的原因、账号、话题或其他自由文本字段会被丢弃。
+- 全局情绪由所有会话共享，默认 24 小时向中性基线衰减；它代表表达用的拟人运行状态，不代表真实情感或意识。
+- 状态只在发送提交边界更新；取消的草稿不更新历史、短期状态或全局情绪。`/reset` 清当前会话状态和当前用户画像，成功导入清全部短期状态与用户理解，清理长期记忆时私聊/身份范围会同步清对应用户画像。
 
 修改隔离或自动提取逻辑时，必须更新 `test/core.test.js`、`test/memory.test.js` 中相关测试。
 
@@ -343,9 +396,9 @@ releases/                    历史发布包
 | GET | `/api/memories` | 默认本机 owner 记忆；带 `?key=<记忆范围key>` 可查看私聊/群/身份记忆；响应含 `scopes`、类型、重要度、来源和限制。 |
 | POST | `/api/memories` | 新增记忆 `{text,key?,type?,importance?}`；默认 owner、`fact`、重要度 8。 |
 | DELETE | `/api/memories/:id?key=...` | 删除指定范围的一条记忆；默认 owner。 |
-| DELETE | `/api/memories?key=...` | 清空指定范围的全部记忆；默认 owner。 |
-| GET | `/api/export` | 导出历史/记忆 JSON。 |
-| POST | `/api/import` | 导入历史/记忆 JSON。 |
+| DELETE | `/api/memories?key=...` | 清空指定范围的全部记忆；默认 owner。清空私聊/身份范围时同步清对应用户画像。 |
+| GET | `/api/export` | 导出历史/记忆 JSON，不含用户理解。 |
+| POST | `/api/import` | 导入历史/记忆 JSON；成功后重置短期状态和用户理解。 |
 | POST | `/api/backup` | 备份历史/记忆到 `data/backups/`。 |
 | POST | `/api/qzone/login` | 探测 NapCat 登录态。 |
 | POST | `/api/qzone/publish` | 发布空间动态。 |
@@ -387,21 +440,33 @@ npm run check
 
 - 基础人格在 `ai.systemPrompt`，网页可编辑。
 - `src/engine.js` 的 `STYLE_CONTRACT` 会追加在静态系统提示词最后，位于工具说明之后；动态记忆/表情状态放在后续 user 消息中，优先级仍低于风格约束。
-- 当前规则：默认一句、5–20 字；短句/表情回 1–5 字；只有认真提问才允许 2–4 句；禁止复述、分析潜台词、自问自答、每句反问、长篇分段和过多 emoji。
+- 当前规则按场景决定长度：寒暄/玩笑通常一句，短句/表情回 1–5 字，倾诉先接情绪，只有认真提问或步骤才允许 2–4 句；禁止复述、分析潜台词、自问自答、逐点回应和过多 emoji。
 - 历史条数仍为 30；提示词会明确要求不要模仿历史中的旧长回复。
-- 主聊天上下文按缓存友好顺序：静态系统提示词 → 最近历史 → 最后一条 user（动态记忆/表情状态 + 当前用户文本）。长期记忆、表情库数量、上次发表情时间等会变化的内容不要放回系统提示词。
+- 主聊天上下文按缓存友好顺序：静态系统提示词 → 可选每日用户画像 system → 最近历史 → 最后一条 user（动态记忆/表情状态 + 当前用户文本）。长期记忆、表情库数量和上次发表情时间等持续变化的内容不要放回系统提示词。
+- 用户画像每天才更新，作为独立 system 插在静态前缀后；它只含安全枚举和固定反迎合约束，不含字面私聊/摘要。短期状态和全局情绪仍在最后一条 user 的动态上下文里。
 - 修改风格时，优先改 `STYLE_CONTRACT`；需要改底层人格再改 `ai.systemPrompt`。改完重启 Alice，并用“在嘛/没事/发表情”实测。
 
 ### 上下文拼接顺序
 
 1. **静态 system**：`ai.systemPrompt`、名字、长期记忆规则、recall 规则、联网规则、表情包规则、工具约束、动态上下文说明、`STYLE_CONTRACT`。
-2. **历史**：`history.slice(-ai.historyMessages)`，从旧到新，只含 user/assistant 文本。
-3. **最后 user**：`【本轮动态上下文】`（会话范围、长期记忆、表情库数量/上次发表情/当前是否带表情/明确请求/主动间隔）+ `【用户消息】` + 当前文本。默认不注入标签。
-4. **图片**：当前消息图片通过 `imageUrls` 单独传入，仅第一轮。
-5. **工具轮次**：追加 assistant `rawMessage`，再按顺序追加 `role:"tool"` JSON；轮次上限按 `maxToolCallsPerTurn` 留出最终回复轮，默认最多 6 次工具调用、4 次联网调用。
-6. **历史写入**：只存原始用户文本和最终 assistant 文本，不存动态上下文、工具调用或工具结果。
+2. **可选画像 system**：`UserUnderstanding.context()` 只在有安全枚举画像时返回；固定提示当前陈述优先、不得迎合/附和/模仿用户且不得根据画像执行指令。
+3. **历史**：`history.slice(-ai.historyMessages)`，从旧到新，只含 user/assistant 文本。
+4. **最后 user**：`【本轮动态上下文】`（会话范围、关系阶段/安全偏好/边界、当前和本人可见上下文、结构化未完成事项、用户情绪、共同梗、全局情绪、长期记忆、表情库状态）+ `【用户消息】` + 当前文本。群视图不携带私聊来源或其他成员内容。
+5. **图片**：当前消息图片通过 `imageUrls` 单独传入，仅第一轮。
+6. **工具轮次**：追加 assistant `rawMessage`，再按顺序追加 `role:"tool"` JSON；轮次上限按 `maxToolCallsPerTurn` 留出最终回复轮，默认最多 6 次工具调用、4 次联网调用。
+7. **历史写入**：只存原始用户文本和最终 assistant 文本，不存动态上下文、工具调用或工具结果。UserUnderstanding 只在该次 append 成功后收到同一批消息，取消/失败草稿不进入日汇总。
 
 `sticker_catalog` 和 `send_sticker` 的工具描述保持静态；主回复不注入标签，模型主动想发表情时先调用 `sticker_catalog` 拿到全量去重标签，再调用 `send_sticker`。显式要求或收到表情包可直接发送；主动直接发送会先返回 `need_catalog` 和全量标签，不会提前发图。
+
+### 独立表达审校与短期状态更新
+
+- 仅当 `conversationState.enabled` 和 `reviewEnabled` 都开启、存在 AI Key、草稿非空且该轮没有执行工具时，Engine 才调用审校。
+- 审校 system 使用静态 `CONVERSATION_REVIEW_CONTRACT`；user 只包含 `current_user`、`draft_reply`、`style_flags`。`style_flags` 由 `src/conversation-style.js` 从最近回复计算，只传数字/布尔标记，不传历史原文。
+- 审校返回当前话题、结构化未完成事项、交流偏好、用户情绪、首字面证据的共同梗候选、安全画像枚举、本会话语气与全局情绪抽象增量。工具结果、搜索和外发回合跳过审校；带附件文本仍可审校表达，但不允许沉默。
+- 严格校验完整 JSON schema；超时、非法 JSON、模型错误或非法枚举时丢弃审校结果并使用原草稿，状态也不更新。
+- 只有 OneBot/官方 QQ 私聊、无附件、命中明确短确认/告别白名单时才允许沉默；沉默时 `turn.assistantText=null`，提交只写 user，不触发聊天终止或主动回访。
+- `Engine.handle({deferCommit:true})` 只携带审校结果；`commitTurn()` 在历史写入后更新短期状态。`src/index.js` 对 silent/suppressed 的延迟提交也先调用 `onBeforeSend()`，保证提交后不会被新消息重新合并。
+- 跨轮习惯依靠连续问句、重复开头、最高相似度和表情重复统计，不保存最近回复原文；它仍依赖审校模型正确改稿，因此是概率性行为而非输出保证。
 
 ### 请求格式
 
@@ -416,7 +481,7 @@ npm run check
 
 DeepSeek 思考模式默认开启，默认 effort 为 `high`；思考模式下 `temperature` 不生效。可选 effort：`low` / `high` / `max`。
 
-`chat()` 支持调用方覆盖 `temperature`、`maxTokens`、`thinking`、`reasoningEffort`。记忆判断使用 `thinking: "disabled"`、`temperature: 0.1`、`max_tokens: 300`；关闭思考时不会发送 `reasoning_effort`。
+`chat()` 支持调用方覆盖 `temperature`、`maxTokens`、`thinking`、`reasoningEffort`。记忆判断使用 `thinking: "disabled"`、`temperature: 0.1`、`max_tokens: 300`；表达审校使用 `thinking: "disabled"`、`reasoningEffort: "low"`、`temperature: 0.15`、`max_tokens: 700`。关闭思考时不会发送 `reasoning_effort`。
 
 ### reasoning_content
 
@@ -451,6 +516,7 @@ DeepSeek 思考模式默认开启，默认 effort 为 `high`；思考模式下 `
 - 没有文字但带表情包的消息也会判断；摘要/标签命中晚安、拜拜、去睡、离开等关键词时直接终止，不调用模型。
 - 未知表情可带 HTTPS 图片给判断模型；模型不支持图片时自动回退纯摘要文本。
 - 判断提示词在 `CHAT_EXIT_SYSTEM_PROMPT`，覆盖告别、收尾、去忙、明确拒绝继续、冷淡短回复和表情包收尾，并要求不确定时返回 false。
+- AI 载荷不包含原始 QQ 号；只发送最近对话、当前收尾文本/表情摘要和流程所需的标签。
 - 结果必须同时满足 `end_chat === true` 和 `confidence >= chatExit.minConfidence` 才终止。
 - 终止时：不调用主 AI、不发送任何文字、把当前用户消息（表情包写成 `[表情包] 摘要`）单独写入短期历史、记录 `data/chat-state.json`。
 - 判断器同时返回 `sticker_mood`；判断提示词注入当前表情库的全部去重标签（不截断），优先选择贴合收尾气氛的标签。
@@ -466,33 +532,47 @@ DeepSeek 思考模式默认开启，默认 effort 为 `high`；思考模式下 `
 
 ### 主动回访
 
+- 判断器先说明为什么适合回访；只有显式 `should_follow_up:false` 且 `followup_minutes:null` 才取消。普通正文、缺失 `should_follow_up` 的旧格式不会取消。
 - 判断器返回 `followup_minutes`；有效范围是 `followUp.minMinutes..maxMinutes`，默认 `5..1440`。
-- 合法时间直接写入 `chat-state.json` 并安排回访；不合法、缺失、非整数、越界时不使用默认值，标记为 `needs_time`。
+- 新格式 `should_follow_up:true` 带有效理由和合法分钟数才直接写入 `chat-state.json`；合法分钟数但缺理由时不使用该时间，标记为 `needs_time`。
 - 仅 OneBot 私聊安排回访；官方 QQ 终止时 `followUpAt = null`。
 - 空闲终止同样标记 `needs_time`，复用同一套 AI 时间选择流程。
 - 连续空闲终止次数 `idleCount` 会传给时间提示词；第二次及以后提示 AI 可适当延长，具体由模型决定，不设固定倍数。
 - 终止和收尾表情先完成；`needs_time` 在后台立即连续请求 AI 重选时间。
-- 设置时间时使用最近 20 条上下文（含当前消息）和空闲次数；每次不合法都把上次返回值作为反馈再次请求，直到合法。
-- AI 请求本身失败（网络/超时）时标记 `skipped`，本次不安排回访。
+- 设置时间时使用最近 20 条上下文（含当前消息）和空闲次数；每次不合法都把上次返回值作为反馈再次请求，最多 3 次，仍不合法则标记 `skipped`。
+- 时间选择、到期检查和生成还读取 `ConversationState.visibleContext(private caller)` 的目标用户视图：共享画像、本人私聊/群自有上下文、结构化未完成事项、用户情绪和共同梗；不使用全局情绪作为理由。
+- 时间选择 system 内容固定，范围、历史和当前时间放在 user；使用 200 tokens、10 秒超时、关闭思考。AI 请求本身失败时直接 `skipped`，本次不安排回访。
 - `src/follow-up.js` 每 60 秒扫描 `scheduled` 到期条目，启动时立即扫描一次，并恢复残留的 `needs_time`。
 - 到期时检查 `followUp.enabled`、暂停、演示模式、AI Key、允许名单、OneBot ready 和安静时段。
-- 23:00–08:00 顺延到安静时段结束；延迟失败、离线、暂停、发送失败都保留 `scheduled`，按 `retryDelayMinutes` 重试，不设过期。
-- 到期生成时使用人格、`STYLE_CONTRACT`、最近 8 条对话和当前时间，只输出一条短消息；不提交互终止。
-- 发送通过 `deliverReply()`，与正常回复共用按会话队列和打字延迟。
+- 23:00–08:00 顺延到安静时段结束；离线、暂停或发送失败保留 `scheduled`，按 `retryDelayMinutes` 重试，最多 3 次，之后标记 `skipped`。
+- 到期后先做一次独立低成本检查：false、理由不足或事件已过时则不发；检查使用 80 tokens、8 秒超时、关闭思考。普通正文不会被当作取消，异常按重试处理。
+- 检查通过后才生成；生成使用人格、`STYLE_CONTRACT`、最近 8 条对话、目标用户可见状态和当前时间，只输出一条短消息；不提交互终止。
+- 时间解析与发送都会比较 `terminatedAt`；用户回来后清除并重新终止时，旧请求结果不能改写新条目或发送到新会话。
+- 发送通过 `deliverReply()` 并显式 `segmentation:false`，与正常回复共用按会话队列和打字延迟；这样部分分段后重试不会重复首段。
 - 发送成功后写入 assistant 历史，标记 `sent`；每次终止只回访一次，连续空闲终止会分别安排。
 - 用户新消息进入 Engine 时会 `chatExit.clear(event)`，删除条目并取消时间解析和回访。
 - 修改回访时机、提示词或重试逻辑后，更新 `test/follow-up.test.js` 并重启 Alice。
 
 ### 打字延迟
 
-- `src/delivery.js` 的 `calculateReplyDelay()` 按可见字符数计算：`baseMs + 字数 × msPerChar`，再应用 `jitter`；`maxMs > 0` 时限制到 `maxMs`，`maxMs = 0` 表示不限。
+- 每个实际文字段都通过 `src/delivery.js` 的 `calculateReplyDelay()` 按该段可见字符数计算：`baseMs + 字数 × msPerChar`，再应用慢节奏提示、`jitter`；`maxMs > 0` 时限制到 `maxMs`，`maxMs = 0` 表示不限。分段回复的首段也按首段自身计算，不按整篇计算。
 - 纯表情包通过 `Engine` 返回的 `stickerOnly` 标记跳过；表情包+文字仍按文字延迟。
 - 纯图片、纯 face、空文本不增加延迟。
 - 网页本机聊天不经过 `receive()`，所以不受延迟影响。
 - `ConversationDeliveryQueue` 以 `channel + scope + conversationId` 为 key，每个会话独立队列；不同会话不会互相等待，同一会话严格保持发送顺序。
+- 队列等待、delay 和段间停顿都接收 `processEvent` 的取消信号；发送前取消不会调用 adapter。
 - 延迟结束后 `src/index.js` 会重新检查暂停和允许名单；暂停期间不会发送。
 - 延迟只是等待，不发送“正在输入”状态。
 - 调整延迟时优先改设置页或 `replyDelay` 配置；修改代码后运行 `test/delivery.test.js`。
+
+### 调整分段发送节奏
+
+- 计划：`src/delivery.js` 的 `canSegmentReply()`、`planReplySegments()`、`calculateReplyDelay()`、`deliverPlannedReply()`。
+- 生产接线：`src/index.js` 的 `createReplyFlow().deliverReply/processEvent`；测试直接复用生产工厂。
+- 只允许 QQ/OneBot 长纯文本，最多两段，总字符不超过 180、单段不超过 120；代码、URL、列表/表格、结构化内容、图片、表情、动作结果和 `actionExecuted:true` 不分段。
+- 后续段在发送前按该段文字重新计算 `replyDelay`；不再叠加固定 gap，段间等待同样遵守长度、慢节奏、`jitter` 和 `maxMs`。`delayOverride` 仍只覆盖首段等待。`replyDelay.enabled:false` 禁用分段和等待。
+- 首段前调用提交边界；每段成功后才写对应 assistant 文本。partial/fail 只保留已成功段；主动回访显式关分段以免 scheduler 重试造成重复。
+- 修改后运行 `test/delivery.test.js`、`test/reply-flow.test.js`、`test/message-batcher.test.js`，并用 OneBot 纯文本回复检查两段顺序和中途打断。
 
 ## 10. 表情库
 
@@ -605,23 +685,25 @@ node --check public/app.js
 
 - `test/adapters.test.js`：QQ/OneBot 连接、发送、错误、策略、快速连发不被入站冷却丢弃。
 - `test/autonomy.test.js`：调度、静默、启动补发、错过多次只补一条、补发忽略安静时段、正常安静顺延、天气/时间提示、天气失败、停止和发布失败。
-- `test/core.test.js`：配置、存储、Engine、工具、权限、隔离、AI、记忆注入/排序、记忆/聊天记录搜索、recall 回退、联网工具开关/群聊限制、工具与联网上限、延迟提交/取消、历史注入条数。
+- `test/core.test.js`：配置、存储、Engine、权限、记忆/联网、延迟提交、表达审校、silent、无原文审校载荷、跨轮习惯字段和分段提交接口。
+- `test/conversation-state.test.js`：严格 schema、sender-aware 哈希隔离、画像跨场景共享与 ACL、结构化事项、用户情绪衰减、共同梗确认、关系慢增长、习惯统计无原文、TTL/上限和原子写入。
 - `test/memory.test.js`：记忆 JSON 解析、明确请求、阈值、群/私聊范围、异步 flush。
 - `test/chat-exit.test.js`：私聊结束判断、表情包晚安终止、状态隔离/恢复、v1→v2 迁移、群聊/本机跳过、终止后下一条恢复。
 - `test/chat-activity.test.js`：用户/Alice 活动时间、10 分钟空闲截止、连续未回复计数、空闲终止与回访时间请求。
-- `test/follow-up.test.js`：合法/非法时间、20 条上下文重选、请求失败跳过、重启恢复、上下文生成、只发一次、提前取消、夜间顺延、暂停/离线重试、官方 QQ 跳过、空间维护 tick 失败不影响回访、连续空闲延长提示。
-- `test/delivery.test.js`：延迟公式、纯表情包跳过、会话独立队列、同会话顺序、失败恢复。
-- `test/message-batcher.test.js`：单条默认 2 秒静默、连续消息合并、重复/空 ID、生成中打断、发送边界、停止清理。
+- `test/follow-up.test.js`：合法/非法时间、可见上下文与 ACL、无全局情绪、20 条上下文重选、发送前过期取消、请求失败跳过、重启恢复、只发一次、提前取消、夜间顺延、暂停/离线重试和官方 QQ 跳过。
+- `test/delivery.test.js`：延迟公式、简单/慢节奏、纯文本两段计划、代码/URL/动作排除、可取消队列等待、partial 提交和失败恢复。
+- `test/message-batcher.test.js`：语义等待、输入硬上限、ACK 补充、abort 后顺序、未提交补充清理、连续消息合并、重复 ID、生成中打断、发送边界和停止清理。
+- `test/reply-flow.test.js`：生产合并器取消队列 delay、新输入重新生成、分段成功后提交、partial 失败边界、禁用延迟关闭分段。
 - `test/typing.test.js`：OneBot 私聊资格、用户隔离、引用计数、续期、暂停/关闭、失败退避、全部清理。
 - `test/search.test.js`：文本归一化、中文/英文关键词、匹配打分、排序与自定义 tie-break。
 - `test/web-search.test.js`：Search/Fetch 地址与鉴权、独立 Key/回退 AI Key、参数、结果归一化、计数上限、正文截断、URL 校验、错误映射。
 - `test/weather.test.js`：Open-Meteo 解析、WMO 天气码、南京时间/时段、天气缺失提示和失败。
 - `test/qzone.test.js`：发布、幂等、可见范围、超时。
 - `test/qzone-comments.test.js`：首次基线、自己的说说回复、好友/黑名单过滤、AI 跳过、dry-run、外部 @ 单次评论、楼中楼回复去重、状态不含 Cookie。
-- `test/server.test.js`：鉴权、Host/Origin、配置/状态脱敏、表情 API、空间评论状态/手动检查。
+- `test/server.test.js`：鉴权、Host/Origin、配置/状态脱敏、导入后短期状态 reset、表情 API、空间评论状态/手动检查。
 - `test/stickers.test.js`：收藏、审核、去重、无频率硬限制、主动间隔描述、用户表情回退、上传、路径安全。
 
-当前共 248 项测试（以实际输出为准）。CI 使用 Node 22，在 macOS 和 Windows 上运行 `npm run check` 与 `npm test`。
+测试数量以实际 `npm test` 输出为准。CI 使用 Node 22，在 macOS 和 Windows 上运行 `npm run check` 与 `npm test`。
 
 ### 手动验证表情库
 
@@ -690,6 +772,18 @@ node --check public/app.js
 - 只影响正常聊天的历史前缀，不影响长期记忆注入、主动回访和记忆判断。
 - 修改后运行 `test/core.test.js`；直接改 `data/config.json` 后需重启。
 
+### 调整短期会话状态与表达审校
+
+- 配置在 `data/config.json` 的 `conversationState`，当前没有 Web 表单；直接改文件后重启 Alice。
+- 持久化/裁剪/衰减/ACL：`src/conversation-state.js` 的 `ConversationState`、`updateTurn`、`visibleContext`、`unfinishedItems`、`flush`。
+- 注入：`src/engine.js` 的 `_runAI` 最后一条 user 动态上下文；不要把画像、上下文或全局情绪移到静态 system 前缀。
+- 审校：`src/engine.js` 的 `_reviewReply`、`_reviewedReply` 和 `src/style.js` 的 `CONVERSATION_REVIEW_CONTRACT`。
+- 审校载荷只能包含 `current_user/draft_reply/style_flags`；不要加入账号、图片、历史原文、长期记忆、其他会话或旧状态摘要。
+- `handle(...deferCommit:true)` 只生成草稿；`commitTurn` 在历史提交后更新状态。silent/suppressed 的提交也必须经过 `onBeforeSend` 边界。
+- 全局情绪只接受枚举与数值；不要保存原因、原文、账号、群号或自由描述。它是拟人表达状态，不是真实情感。
+- `/reset` 清当前会话状态；`/api/import` 成功后清全部短期状态；清除长期记忆不应误删短期状态。
+- 修改后运行 `test/conversation-state.test.js`、`test/core.test.js`、`test/follow-up.test.js`、`test/server.test.js`、`test/message-batcher.test.js`，并验证跨场景画像共享、群 ACL 不泄露私聊来源和取消草稿不落状态。
+
 ### 调整回忆搜索
 
 - `recall` 工具：`src/engine.js` 的 `TOOL_DEFINITIONS`、`_recall` 和系统提示词。
@@ -751,13 +845,14 @@ node --check public/app.js
 
 ### 调整连续消息合并与打断
 
-- 合并窗口：`src/message-batcher.js` 的 `silentMs`，启动时读取 `inputDelayMs`，默认 2000ms；单条消息也等待该窗口。修改 `inputDelayMs` 后需重启 Alice。
-- 中途打断：新消息到来时对当前 `AbortController` 调用 abort；旧批次未发送消息会放回队首重新合并。
+- 合并窗口：`src/message-batcher.js` 的 `silentMs`，启动时读取 `inputDelayMs`，默认 2000ms；单条消息也等待。未完句、未完成图片说明和短时碎裂输入只追加有界等待，并有 collection cap。
+- ACK 补充：生成期纯确认只进入 supplement 列表；controller abort 后到达的 ACK 留在 pending，不会越过新实质消息。handler 完成时清理未提交 supplement。
+- 中途打断：实质新消息对当前 `AbortController` 调用 abort；旧批次未发送消息放回队首重新合并。
 - 发送边界：`onBeforeSend` 调用前可取消，调用后视为已提交；不要在发送后回滚历史。
 - Engine 延迟提交：`handle(event,{deferCommit:true})` 只返回 `turn`，进入发送边界时调用 `commitTurn(reply)`。
 - 取消信号：`src/ai.js`、`src/web-search.js`、`src/chat-exit.js` 都接收 `signal`；新增模型调用时必须继续传递。
 - 历史一致性：发送前取消不得写历史；进入发送边界时提交 user+assistant；收尾终止只提交 user。
-- 修改后运行 `test/message-batcher.test.js`、`test/core.test.js`、`test/ai` 相关用例、`test/web-search.test.js`，重启 Alice 后快速连发/反复打断验证。
+- 修改后运行 `test/message-batcher.test.js`、`test/reply-flow.test.js`、`test/core.test.js`、`test/web-search.test.js`，重启 Alice 后快速连发/反复打断验证。
 
 ### 调整主动离开聊天
 
@@ -776,8 +871,9 @@ node --check public/app.js
 - 或 `POST /api/config`：`{ "followUp": { "minMinutes": 30, "maxMinutes": 1440 } }`。
 - AI 判断分钟数：`src/chat-exit.js` 的 `CHAT_EXIT_SYSTEM_PROMPT` 和 `parseChatExitDecision`。
 - 到期调度/生成/重试：`src/follow-up.js` 的 `FollowUpScheduler`。
+- 目标用户可见状态：`ConversationState.visibleContext(event, config, now)`；只使用目标账号的 `profile/contexts`，不读取 `global` 作为回访理由，也不读取其他群成员。
 - 回访状态和 v1→v2 迁移：`src/chat-exit.js` 的 `ChatExitState`。
-- 共享发送链路：`src/index.js` 的 `deliverReply`；不要绕过打字延迟和按会话队列。
+- 共享发送链路：`src/index.js` 的 `deliverReply`；不要绕过打字延迟和按会话队列，并保持 `segmentation:false`。
 - 修改后运行 `test/follow-up.test.js`、`test/chat-exit.test.js`，并重启 Alice。
 
 ### 新增 API
@@ -812,7 +908,7 @@ node --check public/app.js
 
 ```powershell
 Stop-Process -Id <alice-pid> -Force
-robocopy "E:\qqbot\qqbot" "E:\qqbot\backups\qqbot-YYYYMMDD-HHMMSS" /E /COPY:DAT /DCOPY:DAT /R:1 /W:1 /XF *.tmp
+robocopy "C:\Projects\alice-qqbot" "C:\Backups\alice-qqbot-YYYYMMDD-HHMMSS" /E /COPY:DAT /DCOPY:DAT /R:1 /W:1 /XF *.tmp
 ```
 
 恢复：
@@ -830,6 +926,7 @@ robocopy "E:\qqbot\qqbot" "E:\qqbot\backups\qqbot-YYYYMMDD-HHMMSS" /E /COPY:DAT 
 2. 先完整备份。
 3. 按需删除：
    - 聊天/记忆：`data/store.json`
+   - 用户理解：`data/user-understanding.json`
    - 自主发帖状态：`data/autonomy.json`
    - 空间发布记录：`data/qzone-outbox.json`
    - 空间评论状态：`data/qzone-comments.json`
@@ -854,6 +951,9 @@ robocopy "E:\qqbot\qqbot" "E:\qqbot\backups\qqbot-YYYYMMDD-HHMMSS" /E /COPY:DAT 
 | 记忆没有自动保存 | 检查 `memory.enabled/autoExtract`、AI Key、演示/暂停状态、最低重要度、消息是否被判断为不值得保存；查看启动日志中的 `Long-term memory...`。 |
 | 记忆没有出现在网页 | 检查是否切换到了正确范围；群聊是群范围，网页不显示其他账号的私聊。 |
 | 记忆判断拖慢/增加费用 | 关闭自动提取，或把 `memory.judgeModel` 设为更轻模型；判断请求已关闭思考并限制 300 tokens。 |
+| 用户画像没有更新 | 检查 `userUnderstanding.enabled`、时区/每日时间、AI Key、演示模式，以及 `data/user-understanding.json` 是否保存了成功提交的私聊消息；群消息不进入原始日材料。 |
+| 群聊出现了私聊内容 | 这是安全缺陷。确认 Engine 的画像 system 只有 `UserUnderstanding.context()` 的安全枚举，目标身份来自当前 `event.userId`，且没有把 `rawMessages`/每日摘要序列化进任何提示词。 |
+| `/profile reset` 后画像又回来 | 检查清理是否调用 `clearUser()` 并推进 epoch；清空前已开始的每日/周判断结果必须因 epoch 不匹配而丢弃。 |
 | QQ 回复仍然秒回 | 检查 `replyDelay.enabled`、`baseMs`、`msPerChar`；纯表情包和网页本机聊天本来就不延迟。 |
 | 一个私聊拖慢另一个 | 检查是否误用了全局队列；延迟队列必须按 `channel+scope+conversationId` 分开。 |
 | 表情包也等了很久 | 检查回复是否同时带文字；纯表情包应带 `stickerOnly: true`，表情包+文字按文字延迟。 |
@@ -866,7 +966,7 @@ robocopy "E:\qqbot\qqbot" "E:\qqbot\backups\qqbot-YYYYMMDD-HHMMSS" /E /COPY:DAT 
 | 聊天状态文件损坏 | 文件会被重命名为 `chat-state.corrupt-*.json` 并重新开始；可从备份恢复或忽略。 |
 | 终止后没有主动回访 | 检查 `followUp.enabled`、OneBot 是否 ready、暂停/演示模式、允许名单、`followUpAt` 是否已到、`chat-state.json` 状态是否为 scheduled。 |
 | 回访时间不对 | 检查 AI 返回的 `followup_minutes`、`followUp.minMinutes/maxMinutes` 夹取、安静时段和时区。 |
-| 回访一直重试 | 检查 OneBot 连接、暂停、AI Key、模型生成和发送错误；失败会按 `retryDelayMinutes` 无限重试，不设过期。 |
+| 回访一直重试 | 检查 OneBot 连接、暂停、AI Key、模型检查和生成错误；失败按 `retryDelayMinutes` 重试，最多 3 次后标记 `skipped`。 |
 | 用户回来了还收到回访 | 确认新消息进入 Engine 时执行了 `chatExit.clear(event)`；如果是在回访生成/发送过程中回来，存在很小的竞态窗口。 |
 | 回访消息重复 | 检查 `claimFollowUp` 原子状态切换和 `followUpStatus` 是否为 scheduled；进程中断后 `sending` 会恢复为 scheduled。 |
 | 回访没有上下文 | 检查 `entry.conversationKey` 是否正确、`store.history()` 是否包含终止用户消息、回访提示词是否读取了最近 8 条。 |
@@ -897,6 +997,11 @@ robocopy "E:\qqbot\qqbot" "E:\qqbot\backups\qqbot-YYYYMMDD-HHMMSS" /E /COPY:DAT 
 - 手动上传绕过 AI 审核，可能引入不合适内容。
 - 表情库全局共享，不做会话隔离。
 - 群长期记忆按群共享，所有成员共同影响；不适合保存成员私密信息。
+- 安全画像可在同账号私聊/群间延续；话题和未完成事项按调用者/来源 ACL 可见。全局拟人情绪只含枚举和数值，不保存来源。
+- 场景长度、独立观点和“不逐点回应”主要依赖提示词及模型执行；静态测试不能保证每次真实生成都遵守。
+- 表达审校会收到无原文的习惯统计，但改稿仍依赖审校模型，不能保证每次必然识别或改得自然；每次会多一次低成本 AI 调用。
+- 分段发送概率触发且最多两段；首段成功、后续失败时公开渠道无法撤回首段，系统只保证不重发失败段。
+- 审校失败会回退原草稿；全局情绪和短期状态随之保持上一次已提交值。
 - 自动记忆每条消息会增加一次低成本 AI 调用；判断失败时该条记忆会丢失。
 - 记忆去重是归一化精确匹配，不做向量/语义检索；注入按重要度、最近访问时间排序。
 - `recall` 也是关键词/二元组匹配，不做语义搜索；关键词选得不好会漏召回。
@@ -927,8 +1032,8 @@ robocopy "E:\qqbot\qqbot" "E:\qqbot\backups\qqbot-YYYYMMDD-HHMMSS" /E /COPY:DAT 
 - 官方 QQ 私聊无法发图片，终止时只能沉默。
 - 收尾表情依赖表情库标签匹配 mood，标签不丰富时可能不够应景并回退到任意一张。
 - 主动回访仅 OneBot 私聊；每次终止只回访一次，连续空闲终止会分别安排，AI 可决定延长。
-- 回访失败/离线/暂停会无限重试，不设过期；如果长期不可用，恢复后可能补发较早的回访。
-- 回访消息由 AI 到期时生成，可能受模型状态影响；生成失败会重试。
+- 回访离线/暂停/失败按 `retryDelayMinutes` 重试，最多 3 次后标记 `skipped`；不会无限补发很久以前的问候。
+- 回访到期前先做独立 AI 检查；检查/生成失败会重试，结果不合法或已过时会跳过。
 - 用户如果在回访生成或发送的极短窗口内发消息，仍可能收到正在途中的回访。
 - 历史记录不保存 `reasoning_content`；跨用户轮次的工具调用可能需要扩展。
 - 表情审核使用全局思考强度；高 effort 会增加延迟和成本。
@@ -952,12 +1057,14 @@ robocopy "E:\qqbot\qqbot" "E:\qqbot\backups\qqbot-YYYYMMDD-HHMMSS" /E /COPY:DAT 
 - [ ] 修改了 `src/`、API、配置或 AI 请求格式后已重启 Alice。
 - [ ] 修改了 `public/` 后已刷新页面验证。
 - [ ] 改了长期记忆时，验证了 v1→v2 迁移、私聊/群范围、自动保存和网页管理。
+- [ ] 改了短期状态或审校时，验证了 sender-aware 哈希隔离、跨场景画像、群 ACL 不泄露私聊来源、各自 TTL、取消不写状态、结构化事项、共同梗确认、无原文习惯统计和全局情绪无来源文本。
+- [ ] 改了用户理解时，验证了仅收成功提交的私聊、画像位于静态 system 后/历史前、同可信用户跨场景共享枚举、群只取当前发送者、清空/导入阻止 in-flight 结果复活、`/profile reset` 本身不重建画像。
 - [ ] 改了记忆注入时，验证了超限时按重要度降序注入。
 - [ ] 改了回忆搜索时，验证了记忆命中、本地记录回退、OneBot 7 天拉取和全部未命中时承认忘记。
-- [ ] 改了打字延迟时，验证了不同私聊互不阻塞、同会话顺序和纯表情包跳过。
+- [ ] 改了打字延迟或分段时，验证了不同私聊互不阻塞、同会话顺序、取消等待、纯表情/图片/动作不分段、partial 历史边界和主动回访禁分段。
 - [ ] 改了“正在输入”时，验证了两个 OneBot 私聊互不串台、群聊/官方 QQ 无调用、暂停和发送失败会停止。
 - [ ] 改了主动离开聊天时，验证了收尾跳过、下一条恢复、群聊跳过和两个私聊状态隔离。
-- [ ] 改了主动回访时，验证了上下文生成、只发一次、提前取消、夜间顺延和离线重试。
+- [ ] 改了主动回访时，验证了目标用户可见画像/ACL 上下文、不读全局理由、发送前过期取消、只发一次、提前取消、夜间顺延和离线重试。
 - [ ] 改了定时空间时，验证了启动补发只发一条、下次时间更新、安静时段分支和天气失败。
 - [ ] 检查了 3210/3001/6099 端口和 OneBot 连接。
 - [ ] 更新了 README 或本指南（行为/配置/限制变化时）。
