@@ -46,7 +46,7 @@ Alice 自己启动的 HTTP 服务只监听 `127.0.0.1`，默认不开放到局�
 
 - Node.js 22 或更高版本。
 - Windows 或 macOS。
-- 使用个人号路线时，需要安装并登录 NapCatQQ；QQ 空间发布要求 NapCat `>= 4.18.18`。
+- 使用个人号路线时，需要自行安装并登录 NapCatQQ；源码发布包不包含 NapCat 或其登录数据。QQ 空间发布要求 NapCat `>= 4.18.18`。
 - 需要 AI 回复时，在设置中填写兼容 OpenAI Chat Completions 的 Base URL、API Key 和模型名。当前默认模型是 `deepseek-flash`。
 
 ## 安装与启动
@@ -55,7 +55,7 @@ Alice 自己启动的 HTTP 服务只监听 `127.0.0.1`，默认不开放到局�
 
 - Node.js 22 或更高版本。
 - Windows 或 macOS。
-- 使用个人 QQ 时，需要安装并登录 NapCatQQ；QQ 空间发布要求 NapCat `>= 4.18.18`。
+- 使用个人 QQ 时，需要自行安装并登录 NapCatQQ；源码发布包不包含 NapCat 或其登录数据。QQ 空间发布要求 NapCat `>= 4.18.18`。
 - 下载源码：从 [最新 Release](https://github.com/qsdrghu2007/alice-qqbot/releases/latest) 下载 source zip，或执行：
 
 ```bash
@@ -108,7 +108,7 @@ http://127.0.0.1:3210/#token=...
 
 使用个人 QQ（OneBot/NapCat）时：
 
-1. 双击 `start-onebot.bat` 启动项目内的 NapCat。
+1. 先按 [NapCat 与 OneBot](#napcat-与-onebot) 自行安装并登录 NapCat。如果使用 Windows 便携 Shell 包并按脚本约定摆放，双击 `start-onebot.bat` 即可启动 NapCat。
 2. 双击 `start.bat` 启动 Alice；首次运行会自动执行 `npm install`。
 3. 在 NapCat 控制台登录 QQ，必要时打开 NapCat WebUI 扫码。WebUI 默认端口是 `6099`，实际监听地址以 `webui.json` 为准。
 4. 使用终端打印的控制台链接打开网页。
@@ -118,7 +118,7 @@ http://127.0.0.1:3210/#token=...
 
 ### 5. macOS 启动
 
-双击 `start.command` 只会启动 Alice，不会启动 NapCat。使用个人 QQ 时，需要另行安装并启动 NapCat，再把 OneBot WebSocket 地址和令牌配置到设置页。
+双击 `start.command` 只会启动 Alice，不会启动 NapCat。使用个人 QQ 时，请按 [NapCat 官方支持的方式](https://github.com/NapNeko/NapCatQQ/releases) 另行安装并登录 NapCat，再把 OneBot WebSocket 地址和令牌配置到设置页。
 
 如果 macOS 提示没有执行权限，在项目目录执行：
 
@@ -443,24 +443,33 @@ npm test
 
 ## NapCat 与 OneBot
 
-项目内的 NapCat 位于：
+本项目只发布 Alice 源码，不包含 NapCat。请从 [NapCat 官方 Releases](https://github.com/NapNeko/NapCatQQ/releases) 下载并按其说明手动安装、登录。NapCat 与 Alice 是两个独立进程；Alice 不接管 QQ 登录、验证码或设备确认。
+
+Windows 的 `start-onebot.bat` 按以下固定目录寻找便携 Shell：
 
 ```text
 napcat/NapCat.52230.Shell
 ```
 
-具体 NapCat 版本和安装路径由本地部署决定。OneBot 正向 WebSocket 默认监听 `127.0.0.1:3001`。NapCat WebUI 默认端口是 `6099`；启动前应把 `host` 绑定到 `127.0.0.1`、设置强 token/访问控制，并确认防火墙没有对不受信任的网络放行 `6099`。OneBot 配置通常在：
+如果使用官方 Windows 便携 Shell 包，请把解压后的内容直接放到这个目录，使下列两个文件位于同一层：
 
 ```text
-napcat/NapCat.52230.Shell/versions/9.9.33-52230/resources/app/napcat/config/onebot11.json
+napcat/NapCat.52230.Shell/NapCatWinBootMain.exe
+napcat/NapCat.52230.Shell/napcat.bat
 ```
 
-配置要点：
+不要再套一层同名或版本号目录。`NapCat.52230.Shell` 只是启动脚本使用的固定路径名，不代表必须使用 `52230` 版本。
 
-1. 在 NapCat WebUI 中人工扫码登录本人 QQ。
-2. 开启 OneBot WebSocket 服务，地址与 `data/config.json` 的 `onebot.url` 一致。
-3. 如果设置了令牌，`data/config.json` 的 `onebot.token` 必须与 NapCat 一致。
-4. 修改 OneBot 传输配置后，在网页诊断页点击“重连”。
+也可以使用其他目录、解压包或 NapCat 支持的其他安装方式，单独启动 NapCat，此时不需要 `start-onebot.bat`。无论采用哪种方式，都需要在 NapCat 中人工登录本人 QQ，并配置 OneBot 正向 WebSocket：
+
+1. 让 OneBot 监听 `127.0.0.1:3001`，不要在未加固的情况下暴露到局域网或公网。
+2. 在 `data/config.json` 或设置页把 `onebot.url` 设为 `ws://127.0.0.1:3001`。
+3. 如果 NapCat 设置了访问令牌，把相同的 `onebot.token` 配置到 Alice。
+4. 修改传输配置后，在 Alice 诊断页点击“重连”。
+
+NapCat 的 OneBot 传输配置应以当前版本 WebUI 的设置为准；不同版本的文件位置可能变化。NapCat WebUI 默认端口是 `6099`，实际监听地址以本地配置为准。启动前应把 `host` 绑定到 `127.0.0.1`、设置强 token 和访问控制，并确认防火墙没有向不受信任的网络放行 `6099`。
+
+macOS 不使用 Windows Shell 启动脚本。请按 NapCat 官方支持的安装方式独立运行 NapCat，登录本人 QQ 后，同样配置 OneBot 正向 WebSocket 为 `ws://127.0.0.1:3001`，并在需要时让 Alice 和 NapCat 使用相同令牌。
 
 Alice 不读取 QQ 登录 Cookie，不接管验证码，也不提供规避风控的自动化。唯一例外是空间评论模块：它通过 NapCat `get_cookies(domain="user.qzone.qq.com")` 读取空间登录态，只在内存中使用，不写入 `data/`、日志、导出、release 或 Web 状态。
 
@@ -595,7 +604,7 @@ public/                      WebUI（无构建步骤）
 scripts/                     环境检查和安装检查
 test/                        Node 内置测试
 data/                        运行时数据（不提交 Git）
-napcat/                      NapCat 运行时（不提交 Git）
+napcat/                      NapCat 运行目录（自行安装；不提交 Git）
 releases/                    历史发布包
 ```
 
