@@ -1,0 +1,55 @@
+Alice QQ Bot - Source-Available License Notice
+Copyright (c) 2026 Alice QQ Bot contributors
+
+Versions released as v0.4.0 or later, unless the release says otherwise,
+are made available under the Alice Noncommercial and Commercial
+Revenue-Sharing License v1.0. The complete terms are in
+LICENSES/ALICE-SOURCE-AVAILABLE.md.
+
+This project is source-available. It is not offered as an OSI-approved
+open-source license.
+
+Eligible closed, noncommercial use by no more than three authorized users
+is royalty-free under the Small-Scale Noncommercial Community Permission
+in LICENSES/COMMUNITY-PERMISSION.md. Administrators count toward the limit.
+All instances, groups, channels and accounts under common control are
+aggregated.
+
+All Commercial Use requires the copyright holder's prior written consent
+and a separate written commercial agreement that provides for revenue
+sharing. Commercial rights are not granted by this notice, by downloading,
+by filling in a form, or by an inquiry alone. There is no AGPL-3.0 or MIT
+fallback for Commercial Use of v0.4.0 or later.
+
+Noncommercial use that exceeds three authorized users, is open to an
+unspecified public, or is organization production use also requires prior
+written authorization from the copyright holder. No AGPL-3.0 fallback is
+offered for those uses of v0.4.0 or later.
+
+The commercial agreement must identify at least the revenue-sharing
+percentage or formula, the revenue or fee base, the calculation period
+and the settlement terms. The parties must agree those terms explicitly;
+the project does not prescribe a default rate.
+
+Versions released as v0.2.1 or earlier remain available under their
+original MIT license. Version v0.3.0 remains available under its original
+AGPL-3.0-or-later plus 20-user Community Exception. Those historical
+grants are preserved in LICENSES/history and cannot be revoked by this
+notice.
+
+Every redistribution and modified version of v0.4.0 or later must retain
+this notice and the complete license terms. It may not be represented as
+MIT-licensed, AGPL-licensed or OSI-approved open source merely because it
+contains or derives from code that was available under an earlier grant.
+Recipients must independently satisfy the current license conditions.
+
+Third-party components remain under their own licenses. See
+THIRD_PARTY_LICENSES.md. No trademark rights are granted.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

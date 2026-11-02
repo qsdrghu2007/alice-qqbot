@@ -1,0 +1,44 @@
+Alice QQ Bot license notice
+Copyright (c) 2026 Alice QQ Bot contributors
+
+This project is licensed under the GNU Affero General Public License,
+version 3 or (at your option) any later version (AGPL-3.0-or-later).
+The complete license text is in LICENSES/AGPL-3.0.txt.
+
+In addition, the copyright holders grant the Small-Scale Noncommercial
+Community Exception described in
+LICENSES/COMMUNITY-EXCEPTION.md. It is an additional permission under
+section 7 of the AGPLv3 for uses that satisfy every condition in that
+file. Qualifying users may exercise the permissions in the Exception
+without satisfying the AGPL source-code and copyleft conditions for
+that use. The Software itself remains licensed under
+AGPL-3.0-or-later plus this Exception.
+
+Users who do not qualify for the Exception must use the Software under
+AGPL-3.0-or-later and comply with its requirements. The Exception does
+not remove, replace, or sublicense the project under the MIT License.
+
+The current threshold is:
+
+    MAX_AUTHORIZED_USERS = 20
+
+The number is part of the Exception and may be changed by the copyright
+holders for future grants. Changes do not withdraw a permission already
+granted for an earlier use.
+
+Versions released as v0.2.1 or earlier remain available under their
+original MIT license. That grant cannot be revoked. The legacy MIT text
+is in LICENSES/LEGACY-MIT.txt. This AGPL and Exception structure applies
+to v0.3.0 and to contributions accepted under this notice; it does not
+retroactively change older releases.
+
+Third-party components remain under their own licenses. See
+THIRD_PARTY_LICENSES.md. The license grants no trademark rights.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

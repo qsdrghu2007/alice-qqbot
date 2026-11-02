@@ -1,0 +1,25 @@
+{
+  "name": "xiaoyu-qqbot",
+  "version": "0.4.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qsdrghu2007/alice-qqbot.git"
+  },
+  "type": "module",
+  "description": "Local-first QQ companion with a web console",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test",
+    "check": "node scripts/check.js",
+    "setup": "node scripts/setup.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
