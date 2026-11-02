@@ -19,7 +19,7 @@ const RECONNECT_DELAYS = [1_000, 2_000, 5_000, 10_000, 30_000];
 const RATE_LIMIT_BLOCK_MS = 60_000;
 const HISTORY_PAGE_SIZE = 100;
 const HISTORY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
-const READ_ONLY_ACTIONS = new Set(["get_status", "get_login_info"]);
+const READ_ONLY_ACTIONS = new Set(["get_status", "get_login_info", "get_group_info"]);
 const CHAT_ACTION_POLICY = new Set([
   "send_private_msg",
   "send_group_msg",
@@ -60,6 +60,8 @@ export class OneBotAdapter {
     this._lastConfig = null;
     this._selfId = null;
     this._pending = new Map();
+    this._groupInfoCache = new Map();
+    this._sentMessageIds = new Set();
     this._echoCounter = 0;
     this._actionBlocked = false;
     this._blockedReason = null;
@@ -139,10 +141,43 @@ export class OneBotAdapter {
         message,
       });
     }
-    return this.call("send_group_msg", {
+    const result = await this.call("send_group_msg", {
       group_id: normalizeOneBotId(event.groupId ?? event.conversationId),
       message,
     });
+    const messageId = String(result?.message_id ?? "");
+    if (messageId) {
+      this._sentMessageIds.add(messageId);
+      while (this._sentMessageIds.size > 1000) {
+        this._sentMessageIds.delete(this._sentMessageIds.values().next().value);
+      }
+    }
+    return result;
+  }
+
+  async getGroupInfo(groupId, { maxAgeMs = 60 * 60 * 1000 } = {}) {
+    const target = String(groupId ?? "").trim();
+    if (!/^\d+$/.test(target)) {
+      throw new AdapterError("OneBot group id must be numeric", "ONEBOT_GROUP_ID_INVALID", {
+        category: "validation",
+      });
+    }
+    const cached = this._groupInfoCache.get(target);
+    const now = Date.now();
+    if (cached && now - cached.at <= maxAgeMs) return cached.memberCount;
+    const data = await this.call("get_group_info", {
+      group_id: normalizeOneBotId(target),
+    });
+    const memberCount = Number(data?.member_count ?? data?.memberCount);
+    if (!Number.isInteger(memberCount) || memberCount < 1) {
+      throw new AdapterError(
+        "OneBot group info did not contain a valid member count",
+        "ONEBOT_GROUP_COUNT_MISSING",
+        { category: "protocol" },
+      );
+    }
+    this._groupInfoCache.set(target, { memberCount, at: now });
+    return memberCount;
   }
 
   async setInputStatus(event) {
@@ -552,7 +587,6 @@ export class OneBotAdapter {
       parsed.mentionId === this._selfId ||
       Boolean(this._selfId && rawMessage.includes(`[CQ:at,qq=${this._selfId}]`));
     const scope = payload.message_type;
-    if (scope === "group" && !mentionedSelf) return;
 
     const groupId = scope === "group" ? String(payload.group_id ?? "") : undefined;
     if (scope === "group" && !groupId) return;
@@ -566,6 +600,16 @@ export class OneBotAdapter {
       text: parsed.text || (Array.isArray(payload.message) ? "" : rawMessage),
       attachments: parsed.attachments,
       links: Array.isArray(parsed.links) ? parsed.links : [],
+      mentionIds: Array.isArray(parsed.mentionIds) ? parsed.mentionIds : [],
+      mentionedSelf,
+      ...(scope === "group" && parsed.quotedMessageId
+        ? {
+            quotedMessageId: parsed.quotedMessageId,
+            quotedSelf:
+              parsed.quotedSenderId === this._selfId ||
+              this._sentMessageIds.has(parsed.quotedMessageId),
+          }
+        : {}),
       timestamp: Number.isFinite(Number(payload.time))
         ? new Date(Number(payload.time) * 1_000).toISOString()
         : new Date().toISOString(),

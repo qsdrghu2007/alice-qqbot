@@ -46,6 +46,10 @@ Windows 启动顺序：先 `start-onebot.bat`，再 `start.bat`。控制台令�
 - 打字延迟：`src/delivery.js`；仅 QQ/OneBot，按字数计时，纯表情包跳过，不同会话独立队列。
 - 延迟配置：`replyDelay.enabled/typingIndicator/baseMs/msPerChar/maxMs/jitter`，设置页可调基础延迟、每字延迟、最大延迟和“正在输入”开关。
 - 连续消息合并：`src/message-batcher.js`；仅 OneBot/官方 QQ，按会话+发送者合并，最后一条消息后等待 `inputDelayMs`（默认 2000ms）再开始 typing；明显未完句会追加有界语义等待。生成期明确 ACK 作为补充保留，实质新消息打断并重新合并；网页本机不合并。`policy.cooldownMs` 只限制外发，不得丢弃入站消息。
+- 群聊参与：`src/group-chat.js`；OneBot 非 @ 消息进入有界内存现场。@、当前 `persona.name`、引用 bot 是明确召唤；非点名只在群模式 `natural/active` 建立候选，主动等待为 `30000 + 群总人数 × 1200ms`，每群默认每小时 6 次模型预算，连续/无人接话后默认冷却 4 分钟。人数缺失跳过主动候选，明确回复不受影响。
+- 群聊模型成本：非点名候选禁用工具、审校和自动记忆提取，以一次关闭思考、500 tokens 的 JSON 结果选择短句、QQ 表情、收藏表情或沉默；回复为 transient，不写正常群历史。明确请求仍走完整原链路。候选预算在模型调用前记账，silence/取消也占用。
+- 群聊边界：明确召唤发送前同一成员的非 @ 续句返回 `pending_continuation`，进入原 MessageBatcher；其他成员热聊不清除无人接话冷却。泛问和没有话题/记忆/兴趣/关系/已学习互动支撑的普通问题不能独立形成候选。私聊长期偏好最多投影为固定宽泛兴趣类别，原文和具体私事不进群提示词。
+- 群配置：`groupChat.enabled/defaultMode/modes/quietHours/timezone/proactiveWaitBaseMs/proactiveWaitPerMemberMs/budgetPerHour/cooldownMinutes/maxConsecutiveMessages/noResponseMinutes/sceneMessages/sceneWindowMinutes`；设置页可编辑。默认 `natural`，每群模式只能 `mention/natural/active`。
 - 分段发送：`src/index.js` 的 `createReplyFlow()` + `src/delivery.js`；仅 QQ/OneBot 纯文本，最多两段并带随机停顿。代码、URL、结构化输出、动作结果、图片或表情不拆分；`replyDelay.enabled=false` 时关闭分段。
 - 打断规则：静默期、AI 生成、搜索/抓取、结束判断、打字 delay 期间来新消息都立即中断当前轮，保留未回复消息并重新等待 `inputDelayMs`；调用 `adapter.send` 后不再中断，新消息进入下一批。
 - 历史一致性：`Engine.handle(event,{signal,deferCommit:true})` 只生成草稿；进入发送边界时 `Engine.commitTurn(reply)` 写 user+assistant；发送前取消的草稿不写历史。

@@ -228,6 +228,21 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
     maxInjectedChars: 1200,
   });
   assert.deepEqual(defaultConfig.userUnderstanding, userUnderstandingDefaults);
+  assert.deepEqual(defaultConfig.groupChat, {
+    enabled: true,
+    defaultMode: "natural",
+    modes: {},
+    quietHours: { start: 23, end: 8 },
+    timezone: "Asia/Shanghai",
+    proactiveWaitBaseMs: 30000,
+    proactiveWaitPerMemberMs: 1200,
+    budgetPerHour: 6,
+    cooldownMinutes: 4,
+    maxConsecutiveMessages: 3,
+    noResponseMinutes: 2,
+    sceneMessages: 12,
+    sceneWindowMinutes: 10,
+  });
   const saved = await saveConfig(root, {
     port: 4321,
     ai: { apiKey: "secret-ai", temperature: 0.6 },
@@ -388,6 +403,20 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
   assert.equal(understandingSaved.userUnderstanding.maxUsers, 80);
   assert.equal(understandingSaved.userUnderstanding.retentionDays, 28);
   assert.equal(understandingSaved.userUnderstanding.maxInjectedChars, 900);
+  const groupSaved = await saveConfig(root, {
+    groupChat: {
+      defaultMode: "active",
+      modes: { "123456": "mention" },
+      budgetPerHour: 4,
+      cooldownMinutes: 8,
+    },
+  });
+  assert.equal(groupSaved.groupChat.defaultMode, "active");
+  assert.deepEqual(groupSaved.groupChat.modes, { "123456": "mention" });
+  assert.equal(groupSaved.groupChat.budgetPerHour, 4);
+  assert.equal(groupSaved.groupChat.cooldownMinutes, 8);
+  const groupCleared = await saveConfig(root, { groupChat: { modes: {} } });
+  assert.deepEqual(groupCleared.groupChat.modes, {});
 
   const retained = await saveConfig(root, {
     ai: { apiKey: "   " },
@@ -496,6 +525,18 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
   await assert.rejects(
     saveConfig(root, { autonomy: { timezone: "  " } }),
     /timezone/,
+  );
+  await assert.rejects(
+    saveConfig(root, { groupChat: { defaultMode: "chatty" } }),
+    /groupChat.defaultMode/,
+  );
+  await assert.rejects(
+    saveConfig(root, { groupChat: { modes: { abc: "natural" } } }),
+    /groupChat.modes/,
+  );
+  await assert.rejects(
+    saveConfig(root, { groupChat: { budgetPerHour: 61 } }),
+    /groupChat.budgetPerHour/,
   );
   await assert.rejects(
     saveConfig(root, { memory: { minImportance: 0 } }),

@@ -584,6 +584,7 @@ export function createWebServer({
   stickers,
   conversationState,
   userUnderstanding,
+  groupChat,
   reconnect,
   configChanged,
   sourceUrl,
@@ -626,6 +627,7 @@ export function createWebServer({
           safeStatus(adapters.onebot),
           safeStatus(qzone),
           safeStatus(autonomy),
+          safeStatus(groupChat),
         ]);
         sendJson(res, 200, {
           server: {
@@ -650,6 +652,7 @@ export function createWebServer({
           onebot: statuses[2],
           qzone: statuses[3],
           autonomy: statuses[4],
+          groupChat: statuses[5],
           engine: statuses[0],
           note: "仅监听 127.0.0.1；连接与发布状态均来自实际适配器。",
         });

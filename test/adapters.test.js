@@ -544,6 +544,23 @@ test("OneBot sends Bearer auth, converts structured segments, and correlates API
     echo: outgoing.echo,
   });
   assert.deepEqual(await replyPromise, { message_id: 88 });
+  sockets[0].receive({
+    post_type: "message",
+    message_type: "group",
+    self_id: 9000,
+    user_id: 1234,
+    group_id: 5678,
+    message_id: 78,
+    time: 1_729_000_010,
+    message: [
+      { type: "reply", data: { id: "88" } },
+      { type: "text", data: { text: "继续" } },
+    ],
+    sender: { user_id: 1234 },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(received.quotedMessageId, "88");
+  assert.equal(received.quotedSelf, true);
 
   const likePromise = adapter.like("2468", 3);
   const like = sockets[0].sent.at(-1);
@@ -646,9 +663,10 @@ test("OneBot reports transport connection separately from QQ online health", asy
   await adapter.stop();
 });
 
-test("OneBot ignores group chatter without self mention and messages from bots", async () => {
+test("OneBot forwards group chatter with reply metadata and ignores bot senders", async () => {
   let socket;
   let calls = 0;
+  const events = [];
   const adapter = new OneBotAdapter({
     getConfig: () => oneBotConfig({ onebot: { botUserIds: ["7777"] } }),
     logger: { info() {}, warn() {}, error() {}, debug() {} },
@@ -657,8 +675,9 @@ test("OneBot ignores group chatter without self mention and messages from bots",
       return socket;
     },
   });
-  await adapter.start(async () => {
+  await adapter.start(async (event) => {
     calls += 1;
+    events.push(event);
   });
   socket.open();
 
@@ -696,7 +715,42 @@ test("OneBot ignores group chatter without self mention and messages from bots",
     ],
   });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(calls, 0);
+  assert.equal(calls, 1);
+  assert.equal(events[0].mentionedSelf, false);
+  assert.equal(events[0].text, "chat");
+  await adapter.stop();
+});
+
+test("OneBot resolves and caches the total group member count", async () => {
+  let socket;
+  const adapter = new OneBotAdapter({
+    getConfig: () => oneBotConfig(),
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    socketFactory: () => {
+      socket = new FakeSocket();
+      socket.readyState = 1;
+      return socket;
+    },
+  });
+  await adapter.start(async () => {});
+  socket.emit("open");
+
+  const first = adapter.getGroupInfo("5678");
+  const request = socket.sent.at(-1);
+  assert.equal(request.action, "get_group_info");
+  assert.deepEqual(request.params, { group_id: 5678 });
+  socket.receive({
+    status: "ok",
+    retcode: 0,
+    data: { group_id: 5678, member_count: 42 },
+    echo: request.echo,
+  });
+  assert.equal(await first, 42);
+  assert.equal(await adapter.getGroupInfo("5678"), 42);
+  assert.equal(
+    socket.sent.filter((item) => item.action === "get_group_info").length,
+    1,
+  );
   await adapter.stop();
 });
 

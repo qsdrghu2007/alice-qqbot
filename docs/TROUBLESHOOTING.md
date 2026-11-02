@@ -328,6 +328,17 @@ Client network socket disconnected before secure TLS connection was established
 - 直接注入的历史条数由 `ai.historyMessages` 控制，默认 30；0 表示注入当前保留的全部历史。如果最近历史里全是旧的长回复，模型会模仿，可以调低条数或清理该会话短期历史（保留长期记忆）。
 - 风格约束不截断回复，只通过提示词要求；模型偶发不遵守时，优先加强 `STYLE_CONTRACT` 或清理旧历史，不要直接加硬截断。
 
+## 自然群聊一直不主动说话
+
+- 检查 `groupChat.enabled`、全局 `defaultMode`、每群 `modes`、暂停、演示模式、AI Key、安静时段、每小时预算和退场冷却。
+- 主动候选需要有效的群总人数。检查 NapCat 是否支持 `get_group_info` 并返回 `member_count`；读取失败时会跳过本次主动候选，明确 @ 和当前人格名回复不受影响。
+- 面向全群的泛问（例如“有人玩过这个吗”）、明确 @ 其他成员、引用其他成员和群内连续多人对话会保守跳过。
+- 群越热闹，主动阈值越高。先确认 `test/group-chat.test.js` 和适配器测试通过，再在目标 NapCat 版本观察实际群消息。
+
+## 群聊刚参与就进入冷却
+
+`maxConsecutiveMessages` 或 `noResponseMinutes` 会触发主动退场；明确 @、当前 `persona.name` 和引用 bot 仍可回复，但不会解除自然冷却。可在设置页调整冷却或连续上限。
+
 ## 长期记忆没有自动保存
 
 检查：

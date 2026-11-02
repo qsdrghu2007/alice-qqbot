@@ -113,7 +113,9 @@ export function parseOneBotStringMessage(message) {
   let text = String(message ?? "");
   const attachments = [];
   const links = new Set(collectLinkStrings(text));
-  let mentionId;
+  const mentionIds = [];
+  let replyId = "";
+  let replySenderId = "";
 
   text = text.replace(/\[CQ:([a-z_]+)((?:,[^\]]*)?)\]/gi, (_full, type, params) => {
     const data = {};
@@ -124,7 +126,11 @@ export function parseOneBotStringMessage(message) {
       data[pair.slice(0, at)] = unescapeCq(pair.slice(at + 1));
     }
     if (type === "at") {
-      mentionId = String(data.qq ?? "");
+      const id = String(data.qq ?? "");
+      if (id) mentionIds.push(id);
+    } else if (type === "reply") {
+      replyId = String(data.id ?? "");
+      replySenderId = String(data.qq ?? data.user_id ?? data.sender_id ?? "");
     } else if (type === "image") {
       attachments.push(imageAttachment(data));
     } else if (type === "json" || type === "xml") {
@@ -142,7 +148,10 @@ export function parseOneBotStringMessage(message) {
     attachments,
     links: [...links],
     mentionedSelf: false,
-    mentionId,
+    mentionId: mentionIds.at(-1),
+    mentionIds,
+    quotedMessageId: replyId,
+    quotedSenderId: replySenderId,
   };
 }
 
@@ -152,7 +161,9 @@ export function parseOneBotMessage(message) {
   const textParts = [];
   const attachments = [];
   const links = new Set();
-  let mentionId;
+  const mentionIds = [];
+  let replyId = "";
+  let replySenderId = "";
   for (const segment of message) {
     const type = String(segment?.type ?? "");
     const data = segment?.data ?? {};
@@ -162,7 +173,11 @@ export function parseOneBotMessage(message) {
     } else if (type === "face") {
       textParts.push(`[face:${data.id ?? ""}]`);
     } else if (type === "at") {
-      mentionId = String(data.qq ?? "");
+      const id = String(data.qq ?? "");
+      if (id) mentionIds.push(id);
+    } else if (type === "reply") {
+      replyId = String(data.id ?? "");
+      replySenderId = String(data.qq ?? data.user_id ?? data.sender_id ?? "");
     } else if (type === "image") {
       attachments.push(imageAttachment(data));
     } else if (type === "mface") {
@@ -182,7 +197,10 @@ export function parseOneBotMessage(message) {
     attachments,
     links: [...links],
     mentionedSelf: false,
-    mentionId,
+    mentionId: mentionIds.at(-1),
+    mentionIds,
+    quotedMessageId: replyId,
+    quotedSenderId: replySenderId,
   };
 }
 

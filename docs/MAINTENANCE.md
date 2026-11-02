@@ -114,6 +114,8 @@ src/chat-exit.js             私聊结束判断、终止/回访状态、v1→v2 
 src/follow-up.js             可见上下文回访、到期检查、夜间顺延、重试
 src/delivery.js              打字延迟、分段计划与可取消的按会话发送队列
 src/message-batcher.js       语义等待、ACK 补充、连续消息合并、打断与批次状态
+src/group-chat.js            群现场、候选、人数等待、预算、冷却和非点名结构化动作
+src/group-preferences.js     私聊偏好记忆到固定宽泛兴趣类别的群聊安全投影
 src/search.js                关键词搜索、中文二元组匹配、打分与排序
 src/web-search.js            DeepSeek 网页搜索/抓取、结果归一化、正文截断与错误映射
 src/typing.js                OneBot 私聊“正在输入”续期、计数与按会话隔离
@@ -256,6 +258,19 @@ releases/                    历史发布包
 | `webSearch.maxContentChars` | `6000` | 单页正文最多保留字符数，1000..20000。 |
 | `maxToolCallsPerTurn` | `6` | 每轮最多工具调用，1..10；轮次上限会为最终回复留出一轮。 |
 | `inputDelayMs` | `2000` | 输入前延迟，1..10000ms；独立于 `replyDelay`，修改后需重启 Alice。 |
+| `groupChat.enabled` | `true` | 启用群聊参与运行时；关闭后未点名消息只旁听，@、当前 `persona.name` 和引用 bot 仍走明确回复。 |
+| `groupChat.defaultMode` | `natural` | 全局群模式：`mention/natural/active`。 |
+| `groupChat.modes` | `{}` | 群号到模式的覆盖表；键必须为数字群号。 |
+| `groupChat.quietHours` | `23..8` | 非点名主动参与安静时段；明确召唤不受影响。 |
+| `groupChat.timezone` | `Asia/Shanghai` | 群聊安静时段时区。 |
+| `groupChat.proactiveWaitBaseMs` | `30000` | 主动候选基础等待。 |
+| `groupChat.proactiveWaitPerMemberMs` | `1200` | 每个总群成员增加的主动等待。 |
+| `groupChat.budgetPerHour` | `6` | 每群每小时非点名模型调用预算；0 表示不限。 |
+| `groupChat.cooldownMinutes` | `4` | 主动退场冷却。 |
+| `groupChat.maxConsecutiveMessages` | `3` | Alice 连续群回复上限。 |
+| `groupChat.noResponseMinutes` | `2` | Alice 发言后无人接话的退场阈值。 |
+| `groupChat.sceneMessages` | `12` | 群短期现场最多条数，4..40。 |
+| `groupChat.sceneWindowMinutes` | `10` | 群短期现场时间窗，1..120 分钟。 |
 | `replyDelay.enabled` | `true` | 是否对 QQ/OneBot 回复增加发送前延迟；关闭时也禁用分段和段间停顿。 |
 | `replyDelay.baseMs` | `500` | 基础延迟，0..10000。 |
 | `replyDelay.msPerChar` | `120` | 每个可见字符增加，0..1000。 |
@@ -300,6 +315,7 @@ releases/                    历史发布包
 | `data/store.json` 备份 | `src/store.js` | 导入时写入 `data/backups/`；v1 迁移前写 `store-v1-*.json`。 |
 | `data/conversation-state.json` | `src/conversation-state.js` | version 1：SHA-256 身份/上下文 key、安全画像、结构化事项、用户情绪、共同梗、无原文习惯统计和全局情绪枚举/数值；不含账号、群号、原文或来源描述。 |
 | `data/conversation-state.json.corrupt-*` | `src/conversation-state.js` | 损坏会话状态的隔离文件；之后从空状态重新开始。 |
+| `data/group-chat.json` | `src/group-chat.js` | version 1：SHA-256 群 key、群熟悉度、每小时非点名模型调用时间、连续回复与退场冷却；不保存群现场或群号明文。 |
 | `data/user-understanding.json` | `src/user-understanding.js` | version 1：SHA-256 身份 key、私聊每日裁剪材料、安全摘要/枚举、7 日汇总和失败重试；不含账号或群号。 |
 | `data/user-understanding.json.corrupt-*` | `src/user-understanding.js` | 损坏用户理解的隔离文件；之后从空状态重新开始。 |
 | `data/chat-state.json` | `src/chat-exit.js` | version 2：私聊终止时间、回访时间、状态和重试信息，按 `channel + scope + conversationId` 隔离。 |
@@ -328,6 +344,7 @@ releases/                    历史发布包
   -> src/user-understanding.js（私聊每日理解与 7 日汇总）
   -> src/chat-exit.js（私聊主动结束判断）
   -> src/follow-up.js（终止后主动回访）
+  -> src/group-chat.js（群现场、非点名候选、预算与退场）
   -> src/delivery.js（按会话打字延迟和发送队列）
   -> src/message-batcher.js（连续消息合并、输入前静默与打断）
   -> src/typing.js（OneBot 私聊正在输入）
@@ -345,10 +362,10 @@ releases/                    历史发布包
 
 1. 加载配置。
 2. 初始化 `Store`、`ConversationState`、`UserUnderstanding`、`ChatExitManager` 和 `StickerLibrary`。
-3. 构造 `QQAdapter`、`OneBotAdapter`、`QzonePublisher`、`MemoryManager`、`FollowUpScheduler`、`Engine`、`Autonomy`。
+3. 构造 `QQAdapter`、`OneBotAdapter`、`QzonePublisher`、`MemoryManager`、`FollowUpScheduler`、`GroupChatManager`、`Engine`、`Autonomy`。
 4. 把 `ConversationState` / `UserUnderstanding` 注入 Engine 和 HTTP 服务；导入成功后由服务调用各自的 `resetAll()`。
 5. 启动适配器和自主调度器。
-6. 处理 SIGINT/SIGTERM：先停消息源和调度器，再 flush 记忆、`ConversationState` 与 `UserUnderstanding`，最后完成退出。
+6. 处理 SIGINT/SIGTERM：先停消息源和调度器，再 flush 记忆、`ConversationState`、`UserUnderstanding` 和群聊状态，最后完成退出。
 
 ### 会话与记忆隔离
 
@@ -359,7 +376,7 @@ releases/                    历史发布包
 - 可信身份画像 key：同一 channel/userId 在私聊与群共享；`identityLinks` 命中时可跨通道共享。画像只含关系阶段、枚举偏好和边界。
 - 用户理解 key：与短期安全画像相同，同一可信用户私聊/群共享性格枚举；原始私聊和每日摘要按同一 SHA-256 身份 key 本地保存，但永远不注入群。
 - `visibleContext()` ACL：私聊调用者得到共享画像 + 本人私聊和本人参与群的上下文；群调用者只得到共享画像 + 本人在当前群的上下文。私聊来源和其他群成员内容永不进入群视图。
-- 群聊只有被 @ 时才进入 Engine。
+- 群消息全部先进入 `GroupChatManager`。@、当前人格名和引用 bot 消息进入 Engine；非点名消息只进入内存现场，合并/发送队列仍以实际群会话为 key。
 - 表情库是全局共享；发送使用的 `usage.json` 按会话 key 记录。
 - 自动记忆在回复成功后由 `MemoryManager` 异步执行；同一记忆库串行，避免并发重复。
 - 用户明确“记住/记一下/帮我记住/别忘了/备注/存一下”时走快捷路径，重要度 9，不调用判断模型。
@@ -629,7 +646,8 @@ DeepSeek 思考模式默认开启，默认 effort 为 `high`；思考模式下 `
 - `src/adapters/onebot.js` 是 WebSocket 客户端。
 - 连接时带 Bearer；支持自动重连、请求 echo 关联、超时。
 - 事件解析保留表情元数据：`file`、`url`、`summary`、`subType`。
-- 群聊只有被 @ 才处理；忽略自己和 bot 消息。
+- 群消息全部上报；保留 @ 列表、引用消息 ID、引用发送者和 bot 自己发送过的消息 ID。忽略自己和其他 bot；允许名单、暂停在适配器与上层各检查一次。
+- `get_group_info` 读取 `member_count` 并按小时缓存。群人数缺失时返回明确错误，不做 0 回退；主动候选跳过，明确回复不受影响。
 - 发送支持文本、face、image（包括 data URL）。
 - `like` 和 `send_qzone_msg` 走同一 `call()` 通道。
 - 对风险控制、权限不足、限流有分类和封锁逻辑；修改错误分类时补 `test/adapters.test.js`。
@@ -700,6 +718,7 @@ node --check public/app.js
 - `test/follow-up.test.js`：合法/非法时间、可见上下文与 ACL、无全局情绪、20 条上下文重选、发送前过期取消、请求失败跳过、重启恢复、只发一次、提前取消、夜间顺延、暂停/离线重试和官方 QQ 跳过。
 - `test/delivery.test.js`：延迟公式、简单/慢节奏、纯文本两段计划、代码/URL/动作排除、可取消队列等待、partial 提交和失败恢复。
 - `test/message-batcher.test.js`：语义等待、输入硬上限、ACK 补充、abort 后顺序、未提交补充清理、连续消息合并、重复 ID、生成中打断、发送边界和停止清理。
+- `test/group-chat.test.js`：等待公式、总人数上限语义、人数缺失不影响明确召唤、动态人格名、公开记忆候选、泛问排除、忙碌抑制、对象相关取消、显式对话让位/续聊、冷却、沉默预算、Engine 单调用与群/私聊记忆隔离。
 - `test/reply-flow.test.js`：生产合并器取消队列 delay、新输入重新生成、分段成功后提交、partial 失败边界、禁用延迟关闭分段。
 - `test/typing.test.js`：OneBot 私聊资格、用户隔离、引用计数、续期、暂停/关闭、失败退避、全部清理。
 - `test/search.test.js`：文本归一化、中文/英文关键词、匹配打分、排序与自定义 tie-break。
@@ -867,6 +886,20 @@ node --check public/app.js
 - 历史一致性：发送前取消不得写历史；进入发送边界时提交 user+assistant；收尾终止只提交 user。
 - 修改后运行 `test/message-batcher.test.js`、`test/reply-flow.test.js`、`test/core.test.js`、`test/web-search.test.js`，重启 Alice 后快速连发/反复打断验证。
 
+### 调整群聊参与
+
+- 入口：`src/adapters/onebot.js` 保留完整群事件，`src/index.js` 先交给 `GroupChatManager.route()`，只有明确召唤继续进入 `MessageBatcher` 和 Engine。
+- 模式：设置页“群聊参与”填写全局模式与每群覆盖；API 对应 `groupChat.defaultMode/modes`。`mention` 只响应明确召唤，`natural` 使用保守阈值，`active` 只降低本地阈值，不绕过等待、预算或冷却。
+- 现场：`sceneMessages/sceneWindowMinutes` 限制内存条数和时间。成员只以临时别名显示；引用关系靠 `quotedMessageId` 和当前进程发送记录识别。不要把现场写入 store 或 history。
+- 等待：只在主动候选调用 `getGroupInfo()` 后使用 `proactiveWaitBaseMs + memberCount × proactiveWaitPerMemberMs`。人数读取失败必须返回/跳过，不得使用 0。明确召唤和本人短窗续聊不等待人数。
+- 明确召唤的后续：正式答复发送前，同一成员的非 @ 续句必须返回 `pending_continuation` 交给原 `MessageBatcher`，与首批合并或触发原批次打断；不要另开主动候选。
+- 取消：候选按对象、引用和话题相关消息失效；不要每次群消息都 abort。生成开始后仍保留取消信号，发送前 `onBeforeSend` 再验证候选代次。
+- 支撑门槛：泛问直接排除；普通问题必须至少命中相邻话题、群记忆、兴趣、关系或已学习群互动之一，`familiarity` 基线不能单独触发。
+- 成本：模型调用前写入 `data/group-chat.json` 时间戳，因此失败、取消和 silent 都占用预算。非点名回合禁用工具、审校和自动记忆；`Engine` 用一次关闭思考、500 tokens、JSON response format 返回 `text/face/sticker/silence`。
+- 冷却：连续回复达到 `maxConsecutiveMessages` 或 `noResponseMinutes` 无人接话后写 `cooldownUntil`。只有引用/点名 bot 或 Alice 刚回复的同一成员接话才清除无人接话计时；其他人的热聊不能重置。明确召唤可越过自然冷却回复，但不得清零或缩短它；冷却后只评估新消息。
+- 隐私：候选只能使用当前群公开现场、当前群记忆、当前发送者 `visibleContext()` 安全画像、稳定 persona 喜好/观点。群提示词最多读取当前发送者自己的私聊 `preference` 记忆，再投影为固定宽泛兴趣类别；只注入当前群话题命中的类别名，原文永不进提示词。不得拼接群长期历史原文、其他成员私聊、其他群或完整 private history。
+- 修改后运行 `test/group-chat.test.js`、`test/adapters.test.js`、`test/core.test.js`，再重启 Alice。真实模型语气和引用字段仍需在目标 NapCat 版本上手工确认。
+
 ### 调整主动离开聊天
 
 - 网页设置 → 主动离开聊天：启用、最低置信度、判断模型、超时。
@@ -1010,6 +1043,9 @@ robocopy "C:\Projects\alice-qqbot" "C:\Backups\alice-qqbot-YYYYMMDD-HHMMSS" /E /
 - 手动上传绕过 AI 审核，可能引入不合适内容。
 - 表情库全局共享，不做会话隔离。
 - 群长期记忆按群共享，所有成员共同影响；不适合保存成员私密信息。
+- 群现场和候选状态中的文字只在内存中，重启后不补旧消息；群熟悉度、预算与冷却使用 SHA-256 群 key 持久化。
+- 群人数缓存最长约一小时；读取失败会跳过主动候选。引用 bot 在本进程重启前发出的消息只能依赖 NapCat 是否携带原发送者。
+- 非点名群聊完全依赖本地启发式与一次低思考模型判断，可能漏掉隐含话题或对特定群风格过于保守；`active` 模式仍不保证每次都参与。
 - 安全画像可在同账号私聊/群间延续；话题和未完成事项按调用者/来源 ACL 可见。全局拟人情绪只含枚举和数值，不保存来源。
 - 场景长度、独立观点和“不逐点回应”主要依赖提示词及模型执行；静态测试不能保证每次真实生成都遵守。
 - 附件历史保存的是去定位、限长后的文字摘要；图片本身的细节、原始 URL、`file` 和媒体数据不会进入后续历史。当前轮有合法 HTTPS 图片时，动态 user 会明确提示可读取图片数量，摘要未识别不会覆盖视觉输入；后续轮次仍只能依赖历史摘要，因此不能保证跨轮识别图片内容。
@@ -1080,6 +1116,7 @@ robocopy "C:\Projects\alice-qqbot" "C:\Backups\alice-qqbot-YYYYMMDD-HHMMSS" /E /
 - [ ] 改了“正在输入”时，验证了两个 OneBot 私聊互不串台、群聊/官方 QQ 无调用、暂停和发送失败会停止。
 - [ ] 改了主动离开聊天时，验证了收尾跳过、下一条恢复、群聊跳过和两个私聊状态隔离。
 - [ ] 改了主动回访时，验证了目标用户可见画像/ACL 上下文、不读全局理由、发送前过期取消、只发一次、提前取消、夜间顺延和离线重试。
+- [ ] 改了群聊参与时，验证了动态 bot 名、@/引用、非 @ 旁听、总人数等待、人数失败、忙碌抑制、相关对象取消、冷却不清除、沉默/取消预算、单次结构化模型调用和群/私聊记忆隔离。
 - [ ] 改了定时空间时，验证了启动补发只发一条、下次时间更新、安静时段分支和天气失败。
 - [ ] 检查了 3210/3001/6099 端口和 OneBot 连接。
 - [ ] 更新了 README 或本指南（行为/配置/限制变化时）。

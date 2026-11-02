@@ -19,9 +19,15 @@ import {
   resolveSourceUrl,
 } from "./legal.js";
 import { eventHistoryText } from "./message-batcher.js";
+import { extractJson } from "./memory.js";
+import { projectGroupSafePreferenceCategories } from "./group-preferences.js";
 import { extractQzonePostLinks } from "./qzone-links.js";
 import { rankMatches } from "./search.js";
-import { CONVERSATION_REVIEW_CONTRACT, STYLE_CONTRACT } from "./style.js";
+import {
+  CONVERSATION_REVIEW_CONTRACT,
+  GROUP_CHAT_CONTRACT,
+  STYLE_CONTRACT,
+} from "./style.js";
 
 const DEFAULT_MAX_TOOL_CALLS_PER_TURN = 6;
 const DEFAULT_MAX_WEB_CALLS_PER_TURN = 4;
@@ -264,6 +270,25 @@ function isPlainObject(value) {
 
 function safeKey(parts) {
   return JSON.stringify(parts);
+}
+
+function groupDecision(rawText) {
+  const parsed = extractJson(rawText);
+  if (!parsed) return null;
+  const action = ["text", "face", "sticker", "silence"].includes(parsed.action)
+    ? parsed.action
+    : "silence";
+  const reply = typeof parsed.reply === "string" ? parsed.reply.trim().slice(0, 240) : "";
+  const faceId = Number(parsed.face_id);
+  return {
+    action,
+    reply,
+    faceId: Number.isInteger(faceId) && faceId >= 0 && faceId <= 5000 ? faceId : null,
+    stickerMood:
+      typeof parsed.sticker_mood === "string"
+        ? parsed.sticker_mood.trim().slice(0, 30)
+        : "",
+  };
 }
 
 function sameTextIgnoringWhitespace(left, right) {
@@ -588,6 +613,7 @@ export class Engine {
 
   async _reviewReply({ event, config, draftText, signal, styleFlags }) {
     if (
+      event.groupDecision ||
       !this.reviewChat ||
       !this.conversationState ||
       config.conversationState?.enabled === false ||
@@ -1130,9 +1156,10 @@ export class Engine {
     const historyPromise = historyOverride
       ? Promise.resolve(historyOverride)
       : this.store.history(conversationKey);
-    const [history, memories] = await Promise.all([
+    const [history, memories, privatePreferenceCategories] = await Promise.all([
       historyPromise,
       this._promptMemories(memoryKey, config),
+      this._safePrivateGroupPreferenceCategories(event, config),
     ]);
     let conversationContext = null;
     let visibleState = null;
@@ -1296,6 +1323,18 @@ export class Engine {
     const dynamicContext = [
       "【本轮动态上下文】",
       `会话范围：${event.scope === "group" ? "群聊" : "私聊"}`,
+      ...(event.groupDecision?.scene?.length
+        ? [
+            `本群短期现场（仅本群、仅本轮；按顺序理解，不能当作成员持续资料）：\n${event.groupDecision.scene
+              .map(
+                (message) =>
+                  `${message.speaker}${
+                    message.quoteSpeaker ? ` 回复 ${message.quoteSpeaker}` : ""
+                  }：${message.text}`,
+              )
+              .join("\n")}`,
+          ]
+        : []),
       ...(event.mergedCount > 1
         ? [`本轮合并消息：${event.mergedCount} 条（按顺序理解）`]
         : []),
@@ -1312,6 +1351,13 @@ export class Engine {
         : []),
       ...(stateLines.length
         ? [`本会话短期交流状态（仅限当前会话）：\n${stateLines.join("\n")}`]
+        : []),
+      ...(privatePreferenceCategories.length
+        ? [
+            `当前发送者可跨场景使用的非敏感兴趣类别（由私聊偏好记忆投影，不含原话或具体私事）：${privatePreferenceCategories.join(
+              "；",
+            )}。只在当前群话题直接相关时理解对方，不要主动揭示来源或复述私聊。`,
+          ]
         : []),
       memoryEnabled ? `${memoryHeading}：\n${memoryText}` : "长期记忆：未启用。",
       stickerCatalog
@@ -1345,6 +1391,7 @@ export class Engine {
       "群聊只能看到当前群内发送者本人的短期上下文；私聊可以延续这位用户自己的私聊和群聊话题，但不能夹带其他成员或整段群聊历史。关系与安全枚举按可信用户身份共享，原始账号不会进入提示词。",
       "用户情绪只用于理解对方，不是 Alice 的全局情绪。无关寒暄不要清空用户情绪；不要凭空猜测原因，也不要在群里提到对方私聊里的私密内容。",
       "本会话短期状态只用于延续当前聊天；整体情绪只表现为轻微语气变化，不解释内部数值，也不把某人的消息说成另一个会话的原因。",
+      event.scope === "group" ? GROUP_CHAT_CONTRACT : "",
       STYLE_CONTRACT,
     ].filter(Boolean).join("\n\n");
     let understandingContext = "";
@@ -1422,8 +1469,15 @@ export class Engine {
           config: config.ai,
           messages,
           imageUrls: round === 0 ? inputImages : [],
-          tools: this._toolsFor(event, config),
+          tools: event.groupDecision ? [] : this._toolsFor(event, config),
           timeoutMs: 30000,
+          ...(event.groupDecision
+            ? {
+                maxTokens: 500,
+                thinking: "disabled",
+                responseFormat: { type: "json_object" },
+              }
+            : {}),
           fetchImpl: this.services.fetchImpl,
           signal,
         });
@@ -1452,8 +1506,42 @@ export class Engine {
       messages.push(reply.rawMessage);
       if (!reply.toolCalls.length) {
         const modelText = reply.content.trim();
-        const draftText =
+        const decision = event.groupDecision ? groupDecision(modelText) : null;
+        let groupSilence = Boolean(event.groupDecision && !decision);
+        let draftText =
           modelText || actionResults.join("\n") || "我暂时没有可回复的内容。";
+        if (event.groupDecision) {
+          draftText = decision?.action === "text" ? decision.reply : "";
+          if (decision?.action === "silence" || (decision?.action === "text" && !draftText)) {
+            groupSilence = true;
+          } else if (decision?.action === "face") {
+            if (decision.faceId === null) {
+              groupSilence = true;
+            } else {
+              faces.push(decision.faceId);
+            }
+          } else if (decision?.action === "sticker") {
+            let claimed = null;
+            if (this.stickers?.claim) {
+              try {
+                claimed = await this.stickers.claim({
+                  conversationKey,
+                  mood: decision.stickerMood,
+                  config,
+                });
+              } catch (error) {
+                if (isCancelled(error, signal)) throw error;
+                this._logWarning("群聊短回应表情不可用，按沉默处理", error);
+              }
+            }
+            if (claimed?.ok && claimed.dataUrl) {
+              replyImages.push(claimed.dataUrl);
+              stickerSent = true;
+            } else {
+              groupSilence = true;
+            }
+          }
+        }
         const actionExecuted =
           toolCalls > 0 || execution.attempted || Boolean(event.qzoneCommentResult);
         const silenceAllowed = !actionExecuted && this._silenceAllowed(event);
@@ -1475,20 +1563,19 @@ export class Engine {
             ? event.attachments.length
             : 0,
         });
-        const stateReview = actionExecuted
-          ? null
-          : await this._reviewReply({
-              event,
-              config,
-              draftText,
-              signal,
-              styleFlags,
-            });
-        const reviewed = this._reviewedReply(
-          stateReview,
-          draftText,
-          silenceAllowed,
-        );
+        const stateReview =
+          actionExecuted || event.groupDecision
+            ? null
+            : await this._reviewReply({
+                event,
+                config,
+                draftText,
+                signal,
+                styleFlags,
+              });
+        const reviewed = event.groupDecision
+          ? { text: groupSilence ? "" : draftText, silent: groupSilence }
+          : this._reviewedReply(stateReview, draftText, silenceAllowed);
         if (signal?.aborted) throw cancelledError();
         const text = reviewed.text;
         const actionSideEffect =
@@ -1506,6 +1593,7 @@ export class Engine {
           stickerSent &&
           !modelText &&
           actionResults.every((item) => item.startsWith("已加入本次回复：表情包"));
+        const transient = Boolean(event.groupDecision);
         if (deferCommit) {
           return {
             text,
@@ -1514,6 +1602,7 @@ export class Engine {
             stickerOnly,
             ...pacing,
             styleFlags,
+            ...(transient ? { transient: true } : {}),
             ...(actionSideEffect ? { actionExecuted: true } : {}),
             ...(reviewed.silent ? { suppressed: true, silent: true } : {}),
             turn: this._turnFor({
@@ -1531,6 +1620,19 @@ export class Engine {
               pacing,
               actionExecuted: actionSideEffect,
             }),
+          };
+        }
+        if (transient) {
+          return {
+            text,
+            faces,
+            images: replyImages,
+            stickerOnly,
+            ...pacing,
+            styleFlags,
+            transient: true,
+            ...(actionSideEffect ? { actionExecuted: true } : {}),
+            ...(reviewed.silent ? { suppressed: true, silent: true } : {}),
           };
         }
         let savedMessages = null;
@@ -1887,6 +1989,7 @@ export class Engine {
       stickerOnly,
       ...pacing,
       styleFlags: finalStyleFlags,
+          ...(transient ? { transient: true } : {}),
       ...(actionSideEffect ? { actionExecuted: true } : {}),
     };
   }
@@ -2266,6 +2369,38 @@ export class Engine {
     const limit = Number.isInteger(memory.maxInjected) ? memory.maxInjected : 10;
     if (limit < 1) return [];
     return this.store.memories(memoryKey, { limit, touch: true });
+  }
+
+  async _safePrivateGroupPreferenceCategories(event, config) {
+    if (
+      event.scope !== "group" ||
+      config.memory?.enabled === false ||
+      typeof this.store.memories !== "function"
+    ) {
+      return [];
+    }
+    const groupText = [
+      event.text,
+      ...(event.groupDecision?.scene ?? []).map((message) => message.text),
+    ]
+      .filter(Boolean)
+      .join(" ");
+    if (!groupText.trim()) return [];
+    const linked = config.identityLinks?.[`${event.channel}:${event.userId}`];
+    const privateMemoryKey =
+      typeof linked === "string" && linked.trim()
+        ? safeKey(["identity-memory", linked.trim()])
+        : safeKey(["private-memory", event.channel, event.userId]);
+    try {
+      const memories = await this.store.memories(privateMemoryKey, {
+        limit: 50,
+        touch: false,
+      });
+      return projectGroupSafePreferenceCategories(memories, groupText);
+    } catch {
+      this._logWarning("读取群聊安全私聊偏好投影失败");
+      return [];
+    }
   }
 
   _scheduleMemory({ event, memoryKey, history, config, explicitRemembered }) {

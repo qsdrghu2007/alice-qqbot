@@ -25,6 +25,21 @@ contexts. It is independent from long-term memory and stays active when
   corrections win, Alice must keep her own judgment, and the profile must not
   be used to flatter, echo, or imitate the user.
 
+## Group-Safe Preference Projection
+
+The shared profile above contains communication traits only. To let group
+conversation reuse non-sensitive private interests without exposing private
+memory text, `src/engine.js` reads only the current sender's private
+`preference` memory entries and maps them to a fixed set of broad categories:
+games, music, film/TV, reading, food, sports, travel, pets, devices, and
+photography. A category is injected only when the current group topic matches
+the same category.
+
+The group prompt never receives the original memory sentence, a specific work,
+product, location, purchase, event, emotion, or other member's data. This
+projection is local and adds no AI call. It stays disabled when long-term
+memory is disabled.
+
 ## Schedule
 
 At the configured local `hour:minute`, the scheduler processes complete natural

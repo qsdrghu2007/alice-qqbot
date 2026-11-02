@@ -21,6 +21,7 @@ import {
 } from "./delivery.js";
 import { Engine } from "./engine.js";
 import { FollowUpScheduler } from "./follow-up.js";
+import { GroupChatManager } from "./group-chat.js";
 import { isLegalCommandText } from "./legal.js";
 import { MemoryManager } from "./memory.js";
 import {
@@ -463,6 +464,18 @@ async function main() {
     activity,
     logger,
   });
+  const groupChat = new GroupChatManager({
+    root: ROOT,
+    getConfig,
+    adapter: onebot,
+    store,
+    conversationState,
+    logger,
+  });
+  await groupChat.init();
+  groupChat.setDeliver((event, options) =>
+    replyFlow.processEvent(onebot, event, options),
+  );
 
   const receivedEvents = new Map();
   const inflightEvents = new Map();
@@ -483,13 +496,17 @@ async function main() {
       getSupplements,
       markSupplementsCommitted,
     }) => {
-      return replyFlow.processEvent(context.adapter, event, {
+      const outcome = await replyFlow.processEvent(context.adapter, event, {
         signal,
         deferCommit: true,
         onBeforeSend,
         getSupplements,
         markSupplementsCommitted,
       });
+      if (event.scope === "group" && event.channel === "onebot") {
+        await groupChat.recordDelivery(event, outcome);
+      }
+      return outcome;
     },
     silentMs: getConfig().inputDelayMs,
     logger,
@@ -502,6 +519,11 @@ async function main() {
       !replyFlow.conversationAllowed(event, current.policy)
     ) {
       return { status: "suppressed" };
+    }
+
+    if (adapter === onebot && event.scope === "group") {
+      const groupRoute = await groupChat.route(event);
+      if (!groupRoute.explicit) return { status: "observed" };
     }
 
     if (event.channel !== "local") {
@@ -607,6 +629,7 @@ async function main() {
       stickers,
       conversationState,
       userUnderstanding,
+      groupChat,
       reconnect,
       configChanged: onConfigChanged,
       logger,
@@ -665,6 +688,7 @@ async function main() {
       autonomy.stop(),
       qzoneComments.stop(),
       followUp.stop(),
+      groupChat.stop(),
       qq.stop(),
       onebot.stop(),
       qzone.stop(),

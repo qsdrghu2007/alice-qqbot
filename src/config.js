@@ -109,6 +109,22 @@ export const userUnderstandingDefaults = Object.freeze({
   maxInjectedChars: 1200,
 });
 
+export const groupChatDefaults = Object.freeze({
+  enabled: true,
+  defaultMode: "natural",
+  modes: Object.freeze({}),
+  quietHours: Object.freeze({ start: 23, end: 8 }),
+  timezone: "Asia/Shanghai",
+  proactiveWaitBaseMs: 30000,
+  proactiveWaitPerMemberMs: 1200,
+  budgetPerHour: 6,
+  cooldownMinutes: 4,
+  maxConsecutiveMessages: 3,
+  noResponseMinutes: 2,
+  sceneMessages: 12,
+  sceneWindowMinutes: 10,
+});
+
 export const defaultConfig = deepFreeze({
   port: 3210,
   inputDelayMs: 2000,
@@ -178,6 +194,11 @@ export const defaultConfig = deepFreeze({
   },
   conversationState: { ...conversationStateDefaults },
   userUnderstanding: { ...userUnderstandingDefaults },
+  groupChat: {
+    ...groupChatDefaults,
+    quietHours: { ...groupChatDefaults.quietHours },
+    modes: {},
+  },
   persona: {
     name: "Alice",
     preferences: [
@@ -257,6 +278,7 @@ function validateConfig(config) {
     "followUp",
     "conversationState",
     "userUnderstanding",
+    "groupChat",
     "persona",
     "identityLinks",
   ]) {
@@ -687,6 +709,63 @@ function validateConfig(config) {
   ) {
     throw new TypeError("userUnderstanding.judgeModel 必须是字符串");
   }
+  if (!isPlainObject(config.groupChat)) throw new TypeError("groupChat 必须是对象");
+  const groupChat = config.groupChat;
+  if (typeof groupChat.enabled !== "boolean") {
+    throw new TypeError("groupChat.enabled 必须是布尔值");
+  }
+  if (!["mention", "natural", "active"].includes(groupChat.defaultMode)) {
+    throw new TypeError("groupChat.defaultMode 必须是 mention、natural 或 active");
+  }
+  if (!isPlainObject(groupChat.modes)) {
+    throw new TypeError("groupChat.modes 必须是对象");
+  }
+  for (const [groupId, mode] of Object.entries(groupChat.modes)) {
+    if (!/^\d+$/.test(groupId) || !["mention", "natural", "active"].includes(mode)) {
+      throw new TypeError("groupChat.modes 的键必须是群号，值必须是 mention、natural 或 active");
+    }
+  }
+  if (
+    !isPlainObject(groupChat.quietHours) ||
+    !Number.isInteger(groupChat.quietHours.start) ||
+    groupChat.quietHours.start < 0 ||
+    groupChat.quietHours.start > 23 ||
+    !Number.isInteger(groupChat.quietHours.end) ||
+    groupChat.quietHours.end < 0 ||
+    groupChat.quietHours.end > 23
+  ) {
+    throw new TypeError("groupChat.quietHours 的 start 和 end 必须是 0..23 的整数");
+  }
+  if (
+    typeof groupChat.timezone !== "string" ||
+    !groupChat.timezone.trim() ||
+    groupChat.timezone.length > 100
+  ) {
+    throw new TypeError("groupChat.timezone 必须是 IANA 时区");
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: groupChat.timezone }).format();
+  } catch {
+    throw new TypeError("groupChat.timezone 必须是 IANA 时区");
+  }
+  for (const [key, min, max] of [
+    ["proactiveWaitBaseMs", 0, 300000],
+    ["proactiveWaitPerMemberMs", 0, 10000],
+    ["budgetPerHour", 0, 60],
+    ["cooldownMinutes", 1, 1440],
+    ["maxConsecutiveMessages", 1, 10],
+    ["noResponseMinutes", 1, 60],
+    ["sceneMessages", 4, 40],
+    ["sceneWindowMinutes", 1, 120],
+  ]) {
+    if (
+      !Number.isInteger(groupChat[key]) ||
+      groupChat[key] < min ||
+      groupChat[key] > max
+    ) {
+      throw new TypeError(`groupChat.${key} 必须是 ${min}..${max} 的整数`);
+    }
+  }
   if (
     !isPlainObject(config.persona) ||
     typeof config.persona.name !== "string" ||
@@ -764,9 +843,11 @@ export async function saveConfig(root, patch) {
   const resolvedRoot = path.resolve(root);
   const operation = async () => {
     const previous = await readConfig(resolvedRoot);
-    const next = validateConfig(
-      preserveBlankSecrets(deepMerge(previous, patch), previous),
-    );
+    const merged = deepMerge(previous, patch);
+    if (isPlainObject(patch.groupChat?.modes)) {
+      merged.groupChat.modes = clone(patch.groupChat.modes);
+    }
+    const next = validateConfig(preserveBlankSecrets(merged, previous));
     await atomicWrite(configPath(resolvedRoot), `${JSON.stringify(next, null, 2)}\n`);
     return next;
   };

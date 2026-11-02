@@ -16,6 +16,7 @@ src/server.js ──> src/engine.js ──> src/ai.js
     |                  ├─> src/user-understanding.js（私聊每日理解与 7 日汇总）
     |                  ├─> src/chat-exit.js（私聊主动结束判断）
     |                  ├─> src/follow-up.js（终止后主动回访调度）
+    |                  ├─> src/group-chat.js（群现场、主动候选、预算和退场）
     |                  ├─> src/delivery.js（按会话打字延迟）
     |                  ├─> src/typing.js（OneBot 私聊正在输入）
     |                  ├─> src/search.js（记忆/聊天记录搜索）
@@ -30,7 +31,7 @@ src/server.js ──> src/engine.js ──> src/ai.js
     └─> Autonomy（定时纯文本生成）
 ```
 
-`src/index.js` 是唯一进程入口：加载配置，初始化 Store、ConversationState、UserUnderstanding、ChatExitManager 和 StickerLibrary，构造适配器、MemoryManager、Engine、FollowUpScheduler、ConversationDeliveryQueue、TypingIndicator、QzonePublisher、Autonomy，启动本地 HTTP 服务，最后启动适配器、自主调度器、回访调度器和用户理解调度器。退出时先停止消息源与调度器，再 flush 记忆、ConversationState 和 UserUnderstanding。
+`src/index.js` 是唯一进程入口：加载配置，初始化 Store、ConversationState、UserUnderstanding、ChatExitManager 和 StickerLibrary，构造适配器、MemoryManager、Engine、GroupChatManager、FollowUpScheduler、ConversationDeliveryQueue、TypingIndicator、QzonePublisher、Autonomy，启动本地 HTTP 服务，最后启动适配器、自主调度器、回访调度器和用户理解调度器。退出时先停止消息源与调度器，再 flush 记忆、ConversationState、UserUnderstanding 和群聊状态。
 
 使用 `--no-web` 或 `ALICE_DISABLE_WEB=1` 时跳过 HTTP 服务和控制台令牌，但 OneBot/QQ 适配器、定时空间、回访和后台任务继续运行；退出时跳过 HTTP server 关闭。
 
@@ -49,6 +50,8 @@ src/server.js ──> src/engine.js ──> src/ai.js
 | `src/follow-up.js` | 回访到期检查、上下文生成、夜间顺延、失败重试、发送、重复空闲时由 AI 决定延长。 |
 | `src/delivery.js` | 按回复字数计算延迟、纯表情包豁免、按会话独立发送队列。 |
 | `src/message-batcher.js` | 连续消息合并、输入前静默、批次打断、发送边界和 generation token。 |
+| `src/group-chat.js` | OneBot 群现场、多人/引用对象、本地候选、人数等待、预算、冷却、沉默/表情动作与哈希化状态。 |
+| `src/group-preferences.js` | 把当前用户私聊 `preference` 记忆映射为固定宽泛兴趣类别；不返回原文。 |
 | `src/typing.js` | OneBot 私聊“正在输入”的按会话计数、续期、退避与清理；群聊/官方 QQ/本机跳过。 |
 | `src/search.js` | 关键词归一化、中文二元组匹配、匹配打分和排序；供记忆与聊天记录搜索共用。 |
 | `src/web-search.js` | DeepSeek Search / Fetch 调用、结果归一化、正文截断、URL 校验和错误映射。 |
@@ -82,7 +85,7 @@ src/server.js ──> src/engine.js ──> src/ai.js
 - 上下文状态：每个上下文单独使用 sender-aware SHA-256 key。私聊调用者能看到本人私聊和本人参与群的上下文；群调用者只能看到本人在当前群的上下文。私有来源和其他成员内容不会进入群视图。
 - 严格边界：消息历史、发送队列、消息合并和终止/回访状态仍按实际会话隔离；跨场景共享只发生在 `visibleContext()` 返回的安全画像与 ACL 上下文。
 - 表情库：全局共享；使用记录 `usage.json` 按会话统计。
-- OneBot 群聊只有被 @ 才进入 Engine。
+- OneBot 群消息全部进入轻量 `GroupChatManager`。明确 @、当前 `persona.name` 或引用本进程发出的 bot 消息进入原 Engine 回复链路；未点名消息只进入有界内存现场。每群模式决定是否建立主动候选。
 
 ## AI 与工具
 
@@ -100,10 +103,24 @@ src/server.js ──> src/engine.js ──> src/ai.js
 1. system 消息：`ai.systemPrompt`、人格名、长期记忆规则、recall 规则、联网规则、表情包规则、工具约束、动态上下文说明、`STYLE_CONTRACT`，用 `\n\n` 连接。这里不放大段记忆、表情库数量、上次发表情时间或当前用户文本。
 2. 可选画像 system：UserUnderstanding 只在存在安全枚举画像时插入独立 system；内容不含私聊原文、每日摘要或账号，固定提醒只用于了解，不得迎合、附和或模仿用户。
 3. 历史消息：`history.slice(-ai.historyMessages)`，保持从旧到新；只含 user/assistant `content` 字符串。纯文字保持原样；附件用户消息写入 `[图片：摘要]`、`[表情：摘要]`、`[图片，内容未识别]` 等安全文本标记。摘要/tags 去除 URL、data/base64、路径和 token 并限长，原始媒体数据和定位字段不落历史。
-4. 最后一条 user：`【本轮动态上下文】` + 会话范围、关系阶段/安全偏好/边界、当前及本人可见上下文、结构化未完成事项、用户短期情绪、已确认共同梗、Alice 全局情绪、长期记忆正文、表情库状态 + `【用户消息】` + 当前文本。群视图不包含私聊来源或其他成员上下文。
+4. 最后一条 user：`【本轮动态上下文】` + 会话范围、非点名群聊的有界本群现场及临时成员别名、关系阶段/安全偏好/边界、当前及本人可见上下文、结构化未完成事项、用户短期情绪、已确认共同梗、Alice 全局情绪、长期记忆正文、表情库状态 + `【用户消息】` + 当前文本。群视图不包含私聊来源、其他群或其他成员私聊上下文。
 5. 当前消息图片通过 `imageUrls` 单独传入，仅第一轮。存在合法图片时，动态 user 会标注“有 N 张可读取图片，摘要未识别不代表看不到”；否则明确“没有可读取图片”，避免未知摘要占位压掉视觉输入。
 6. 工具轮次：追加 assistant `rawMessage`，再按顺序追加每个 `role:"tool"` 的 JSON 结果；轮次上限按 `maxToolCallsPerTurn` 留出最终回复轮，默认 6 次工具调用、4 次联网调用。
 7. 回复成功后只把最终 user/assistant `content` 写入历史，不写动态上下文块。附件用户消息使用安全文本标记；UserUnderstanding 只在该 store 写入成功后收到同一批实际消息，并把首发 user 的标记换回 `event.text`，避免把附件摘要当作原话。
+
+### 群聊参与
+
+- `OneBotAdapter` 把未 @ 群消息也交给上层，并携带 `mentionIds/quotedMessageId/quotedSelf`。适配器对 bot 自己发送的群消息 ID 保留最多 1000 个，用于识别引用；自身、其他 bot、暂停和允许名单仍在进入管理器前过滤。
+- `GroupChatManager` 按群保留最多 `sceneMessages` 条约 `sceneWindowMinutes` 分钟的一次性现场。成员只显示稳定于当前进程的临时别名；消息历史、私聊或其他群不会拼进现场。现场不持久化。
+- 模式优先级是每群 `modes[groupId]` > `defaultMode`。明确召唤不服从模式、主动等待、主动预算或冷却；非点名候选只在非 `mention` 模式运行。
+- 明确召唤进入原回复流水线后、正式消息尚未发送时，同一成员的非 @ 续句返回 `pending_continuation` 并继续交给原 `MessageBatcher`，从而合并或打断原批次；不会创建独立群候选。
+- 候选分数全部本地计算：实质问题、相邻话题、相关群记忆、当前发送者安全关系、群长期熟悉度和 Alice 稳定喜好/观点加分；近期消息量与不同发言人数减分。面向全群的泛问直接排除。普通问题还必须有话题、群记忆、兴趣、关系或已学习群互动中的至少一项支撑，问题文本本身不能独立成为候选。
+- 主动候选取得群总人数后等待 `proactiveWaitBaseMs + memberCount × proactiveWaitPerMemberMs`。`get_group_info` 结果在适配器内按小时缓存；人数缺失返回空结果并跳过本次，不用 0 代替。
+- 等待或生成中出现 @ 其他成员、换引用对象或接走候选话题时，控制器取消；无关闲聊不重置等待。`onBeforeSend` 再检查候选代次，防止生成后的旧草稿发出。
+- 每群每小时非点名预算和哈希化冷却状态保存在 `data/group-chat.json`。模型调用前记账，因此取消、失败和最终沉默也占用；显式召唤不占该预算。冷却由连续回复上限或无人接话触发，显式回复只可越过冷却，不改变冷却截止时间。无人接话计时只在引用/点名 bot，或 Alice 刚回复的同一成员接话时清除；其他人的无关热聊不会暂停该退出计时。
+- 已明确参与后的同一成员在短窗口内无 @ 续聊可跳过人数等待；其他成员先插入时本地判定为多人对话，Alice 退让。冷却结束后只由新消息重新形成候选，不回放旧现场。
+- 非点名 Engine 回合禁用工具、回复审校和额外自动记忆判断，用一次关闭思考、500 token 上限的 JSON 结果选择短文本、QQ 表情、本地表情或沉默。回复标记为 transient，不写正常群历史；群管理器只把实际回复加入短期现场。明确请求保持原有工具、审校、历史和记忆路径。
+- 群聊可读取当前发送者自己的私聊 `preference` 记忆，但只映射到固定宽泛兴趣类别，并只在当前群话题命中同类词时注入类别名。原记忆文字、具体作品/商品、地点、事件、情绪和其他成员数据都不进入提示词。
 
 ### 短期状态、审校与拟人情绪
 

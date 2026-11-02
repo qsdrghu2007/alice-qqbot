@@ -701,6 +701,84 @@
               <fieldset class="settings-group">
                 <legend>
                   <span class="legend-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4Z"></path><path d="M8 9h8M8 12h5"></path></svg>
+                  </span>
+                  群聊参与
+                </legend>
+                <div class="form-grid">
+                  <label class="toggle-field compact-toggle" for="groupChatEnabled">
+                    <span>
+                      <strong>启用自然群聊</strong>
+                      <small>关闭后仍可 @、叫名字或引用 bot 回复</small>
+                    </span>
+                    <span class="switch">
+                      <input id="groupChatEnabled" name="groupChatEnabled" type="checkbox" aria-label="启用自然群聊">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="field">
+                    <span>默认模式</span>
+                    <select id="groupChatDefaultMode" name="groupChatDefaultMode">
+                      <option value="mention">仅 @ / 点名</option>
+                      <option value="natural">自然参与 · 保守</option>
+                      <option value="active">活跃参与</option>
+                    </select>
+                  </label>
+                  <label class="field field-wide">
+                    <span>每群模式（每行“群号=mention/natural/active”）</span>
+                    <textarea id="groupChatModes" name="groupChatModes" rows="4" placeholder="123456789=natural&#10;987654321=mention"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>主动等待基础（毫秒）</span>
+                    <input id="groupChatWaitBaseMs" name="groupChatWaitBaseMs" type="number" min="0" max="300000" step="1000" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>每名群成员增加（毫秒）</span>
+                    <input id="groupChatWaitPerMemberMs" name="groupChatWaitPerMemberMs" type="number" min="0" max="10000" step="100" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>每群每小时非点名模型预算</span>
+                    <input id="groupChatBudgetPerHour" name="groupChatBudgetPerHour" type="number" min="0" max="60" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>退场冷却（分钟）</span>
+                    <input id="groupChatCooldownMinutes" name="groupChatCooldownMinutes" type="number" min="1" max="1440" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>连续发言上限</span>
+                    <input id="groupChatMaxConsecutiveMessages" name="groupChatMaxConsecutiveMessages" type="number" min="1" max="10" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>无人接话退场（分钟）</span>
+                    <input id="groupChatNoResponseMinutes" name="groupChatNoResponseMinutes" type="number" min="1" max="60" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>短期现场条数</span>
+                    <input id="groupChatSceneMessages" name="groupChatSceneMessages" type="number" min="4" max="40" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>现场时间窗（分钟）</span>
+                    <input id="groupChatSceneWindowMinutes" name="groupChatSceneWindowMinutes" type="number" min="1" max="120" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>安静开始（0–23）</span>
+                    <input id="groupChatQuietStart" name="groupChatQuietStart" type="number" min="0" max="23" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>安静结束（0–23）</span>
+                    <input id="groupChatQuietEnd" name="groupChatQuietEnd" type="number" min="0" max="23" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>时区</span>
+                    <input id="groupChatTimezone" name="groupChatTimezone" type="text" placeholder="Asia/Shanghai" autocomplete="off" spellcheck="false">
+                  </label>
+                </div>
+                <p class="field-note">主动插话先等待“基础毫秒 + 群总人数 × 每成员毫秒”，默认约 30 秒起。多人对话、引用对象变化或话题被接走会取消过期候选；@、读取到的当前 bot 名字和引用 bot 消息不受等待、预算或主动冷却限制。人数读取失败时本次主动候选跳过，明确回复不受影响。</p>
+              </fieldset>
+
+              <fieldset class="settings-group">
+                <legend>
+                  <span class="legend-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3 2"></path></svg>
                   </span>
                   打字延迟

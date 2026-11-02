@@ -305,6 +305,12 @@ test("config API accepts sticker and idle termination settings", async (t) => {
     body: JSON.stringify({
       inputDelayMs: 2500,
       maxToolCallsPerTurn: 7,
+      groupChat: {
+        ...defaultConfig.groupChat,
+        defaultMode: "active",
+        modes: { "123456": "mention" },
+        budgetPerHour: 4,
+      },
       stickers: { ...defaultConfig.stickers, proactiveCooldownMinutes: 9 },
       chatExit: { ...defaultConfig.chatExit, idleMinutes: 15 },
       webSearch: {
@@ -326,6 +332,9 @@ test("config API accepts sticker and idle termination settings", async (t) => {
   const payload = await response.json();
   assert.equal(payload.config.inputDelayMs, 2500);
   assert.equal(payload.config.maxToolCallsPerTurn, 7);
+  assert.equal(payload.config.groupChat.defaultMode, "active");
+  assert.deepEqual(payload.config.groupChat.modes, { "123456": "mention" });
+  assert.equal(payload.config.groupChat.budgetPerHour, 4);
   assert.equal(payload.config.stickers.proactiveCooldownMinutes, 9);
   assert.equal(payload.config.chatExit.idleMinutes, 15);
   assert.equal(payload.config.webSearch.searchEnabled, false);

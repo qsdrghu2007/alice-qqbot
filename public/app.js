@@ -189,6 +189,20 @@ const elements = {
   webSearchMaxContentChars: document.querySelector("#webSearchMaxContentChars"),
   maxToolCallsPerTurn: document.querySelector("#maxToolCallsPerTurn"),
   inputDelayMs: document.querySelector("#inputDelayMs"),
+  groupChatEnabled: document.querySelector("#groupChatEnabled"),
+  groupChatDefaultMode: document.querySelector("#groupChatDefaultMode"),
+  groupChatModes: document.querySelector("#groupChatModes"),
+  groupChatWaitBaseMs: document.querySelector("#groupChatWaitBaseMs"),
+  groupChatWaitPerMemberMs: document.querySelector("#groupChatWaitPerMemberMs"),
+  groupChatBudgetPerHour: document.querySelector("#groupChatBudgetPerHour"),
+  groupChatCooldownMinutes: document.querySelector("#groupChatCooldownMinutes"),
+  groupChatMaxConsecutiveMessages: document.querySelector("#groupChatMaxConsecutiveMessages"),
+  groupChatNoResponseMinutes: document.querySelector("#groupChatNoResponseMinutes"),
+  groupChatQuietStart: document.querySelector("#groupChatQuietStart"),
+  groupChatQuietEnd: document.querySelector("#groupChatQuietEnd"),
+  groupChatTimezone: document.querySelector("#groupChatTimezone"),
+  groupChatSceneMessages: document.querySelector("#groupChatSceneMessages"),
+  groupChatSceneWindowMinutes: document.querySelector("#groupChatSceneWindowMinutes"),
   replyDelayEnabled: document.querySelector("#replyDelayEnabled"),
   replyDelayTypingIndicator: document.querySelector("#replyDelayTypingIndicator"),
   replyDelayBaseMs: document.querySelector("#replyDelayBaseMs"),
@@ -907,6 +921,36 @@ function fillConfigForm(config) {
   elements.maxToolCallsPerTurn.value = String(
     firstDefined(readPath(config, "maxToolCallsPerTurn"), 6) ?? "",
   );
+  elements.groupChatEnabled.checked = readPath(config, "groupChat.enabled") !== false;
+  elements.groupChatDefaultMode.value = String(
+    firstDefined(readPath(config, "groupChat.defaultMode"), "natural") || "natural",
+  );
+  elements.groupChatModes.value = formatGroupModes(
+    readPath(config, "groupChat.modes"),
+  );
+  for (const [element, key, fallback] of [
+    [elements.groupChatWaitBaseMs, "proactiveWaitBaseMs", 30000],
+    [elements.groupChatWaitPerMemberMs, "proactiveWaitPerMemberMs", 1200],
+    [elements.groupChatBudgetPerHour, "budgetPerHour", 6],
+    [elements.groupChatCooldownMinutes, "cooldownMinutes", 4],
+    [elements.groupChatMaxConsecutiveMessages, "maxConsecutiveMessages", 3],
+    [elements.groupChatNoResponseMinutes, "noResponseMinutes", 2],
+    [elements.groupChatSceneMessages, "sceneMessages", 12],
+    [elements.groupChatSceneWindowMinutes, "sceneWindowMinutes", 10],
+  ]) {
+    element.value = String(
+      firstDefined(readPath(config, `groupChat.${key}`), fallback) ?? "",
+    );
+  }
+  elements.groupChatQuietStart.value = String(
+    firstDefined(readPath(config, "groupChat.quietHours.start"), 23) ?? "",
+  );
+  elements.groupChatQuietEnd.value = String(
+    firstDefined(readPath(config, "groupChat.quietHours.end"), 8) ?? "",
+  );
+  elements.groupChatTimezone.value = String(
+    firstDefined(readPath(config, "groupChat.timezone"), "Asia/Shanghai") || "",
+  );
   elements.replyDelayEnabled.checked = readPath(config, "replyDelay.enabled") !== false;
   elements.replyDelayTypingIndicator.checked =
     readPath(config, "replyDelay.typingIndicator") !== false;
@@ -1146,6 +1190,22 @@ function formatList(value) {
   return Array.isArray(value) ? value.map(String).join("\n") : "";
 }
 
+function formatGroupModes(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  return Object.entries(value)
+    .map(([groupId, mode]) => `${groupId}=${mode}`)
+    .join("\n");
+}
+
+function parseGroupModes(value) {
+  const modes = {};
+  for (const line of String(value || "").split(/[\n,，;；]+/u)) {
+    const match = /^\s*(\d+)\s*(?:=|:|：)\s*(mention|natural|active)\s*$/iu.exec(line);
+    if (match) modes[match[1]] = match[2].toLowerCase();
+  }
+  return modes;
+}
+
 function parseListInput(value) {
   const values = String(value || "")
     .split(/[,\n，]+/)
@@ -1234,6 +1294,26 @@ function collectConfigPatch() {
       maxPerKey: numberValue(elements.memoryMaxPerKey),
       maxInjected: numberValue(elements.memoryMaxInjected),
       judgeModel: elements.memoryJudgeModel.value.trim(),
+    },
+    groupChat: {
+      enabled: elements.groupChatEnabled.checked,
+      defaultMode: elements.groupChatDefaultMode.value,
+      modes: parseGroupModes(elements.groupChatModes.value),
+      proactiveWaitBaseMs: numberValue(elements.groupChatWaitBaseMs),
+      proactiveWaitPerMemberMs: numberValue(elements.groupChatWaitPerMemberMs),
+      budgetPerHour: numberValue(elements.groupChatBudgetPerHour),
+      cooldownMinutes: numberValue(elements.groupChatCooldownMinutes),
+      maxConsecutiveMessages: numberValue(
+        elements.groupChatMaxConsecutiveMessages,
+      ),
+      noResponseMinutes: numberValue(elements.groupChatNoResponseMinutes),
+      sceneMessages: numberValue(elements.groupChatSceneMessages),
+      sceneWindowMinutes: numberValue(elements.groupChatSceneWindowMinutes),
+      quietHours: {
+        start: numberValue(elements.groupChatQuietStart),
+        end: numberValue(elements.groupChatQuietEnd),
+      },
+      timezone: elements.groupChatTimezone.value.trim(),
     },
     replyDelay: {
       enabled: elements.replyDelayEnabled.checked,

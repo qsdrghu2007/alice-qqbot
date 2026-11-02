@@ -17,6 +17,8 @@ const requiredFiles = [
   "src/chat-exit.js",
   "src/chat-activity.js",
   "src/follow-up.js",
+  "src/group-chat.js",
+  "src/group-preferences.js",
   "src/conversation-state.js",
   "src/conversation-style.js",
   "src/user-understanding.js",
