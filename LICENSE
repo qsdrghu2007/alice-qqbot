@@ -9,7 +9,7 @@ LICENSES/ALICE-SOURCE-AVAILABLE.md.
 This project is source-available. It is not offered as an OSI-approved
 open-source license.
 
-Eligible closed, noncommercial use by no more than three authorized users
+Eligible closed, noncommercial use by no more than twenty authorized users
 is royalty-free under the Small-Scale Noncommercial Community Permission
 in LICENSES/COMMUNITY-PERMISSION.md. Administrators count toward the limit.
 All instances, groups, channels and accounts under common control are
@@ -21,7 +21,7 @@ sharing. Commercial rights are not granted by this notice, by downloading,
 by filling in a form, or by an inquiry alone. There is no AGPL-3.0 or MIT
 fallback for Commercial Use of v0.4.0 or later.
 
-Noncommercial use that exceeds three authorized users, is open to an
+Noncommercial use that exceeds twenty authorized users, is open to an
 unspecified public, or is organization production use also requires prior
 written authorization from the copyright holder. No AGPL-3.0 fallback is
 offered for those uses of v0.4.0 or later.

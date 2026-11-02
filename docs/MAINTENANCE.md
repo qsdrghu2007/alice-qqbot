@@ -19,7 +19,7 @@
 - 不要在响应、日志、测试快照或文档中写入真实密钥、QQ 号、账号密码。
 - `data/` 和 `napcat/` 不提交 Git；它们包含运行数据和登录态。
 - 保留根 `LICENSE`、`LICENSES/ALICE-SOURCE-AVAILABLE.md`、`LICENSES/COMMUNITY-PERMISSION.md`、历史 MIT、v0.3.0 历史材料和第三方声明；不要给 v0.4.0+ 加回 MIT/AGPL 可选路径。
-- 当前封闭非商业许可上限是 `MAX_AUTHORIZED_USERS = 3`，管理员计入，同一运营者的实例、群、通道和账号合并计算。所有商业使用必须事先取得书面同意并签收入分成协议；超过 3 人的非商业、公开或组织生产使用也必须另行书面授权。当前版本没有 AGPL fallback。
+- 当前封闭非商业许可上限是 `MAX_AUTHORIZED_USERS = 20`，管理员计入，同一运营者的实例、群、通道和账号合并计算。所有商业使用必须事先取得书面同意并签收入分成协议；超过 20 人的非商业、公开或组织生产使用也必须另行书面授权。当前版本没有 AGPL fallback。
 - 修改或 fork 网络版本时，把 `ALICE_SOURCE_URL` 指向实际部署源码并保持 `/source`、`/license` 可用。入口用于源码与条款展示；当前版本不以 AGPL §13 强制公开对应源码，商业协议可以另行约定源码、支持和报告条款。
 - 外部操作必须继续受 `policy.paused`、`policy.autoActions`、`actionUsers`、冷却时间和频率限制约束。
 - QQ 空间只有拿到 `tid` 才能判定成功；未知结果不能被自动重发。

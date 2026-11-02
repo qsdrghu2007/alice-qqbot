@@ -4,7 +4,7 @@ Current terms:
 
 - `ALICE-SOURCE-AVAILABLE.md`: complete current custom license.
 - `COMMUNITY-PERMISSION.md`: current closed, noncommercial permission
-  for deployments with at most three Authorized Users.
+  for deployments with at most twenty Authorized Users.
 
 Historical terms:
 

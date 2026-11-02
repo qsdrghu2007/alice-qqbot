@@ -12,7 +12,7 @@ The only scale number is:
 
 | Name | Value |
 | --- | --- |
-| `MAX_AUTHORIZED_USERS` | **3** |
+| `MAX_AUTHORIZED_USERS` | **20** |
 
 "Authorized Users" means the different natural persons currently allowed
 to access a hosted, shared or interactive deployment. Administrators
@@ -61,7 +61,7 @@ The use must not be Commercial Use as defined in
 Ordinary personal study, experimentation, hobbies and student projects
 qualify when all conditions are met. A closed course or research project
 at a school or nonprofit institution may qualify when it has no
-commercial purpose and no more than three Authorized Users. Ordinary
+commercial purpose and no more than twenty Authorized Users. Ordinary
 tuition or a noncommercial research grant does not by itself make the
 course or research commercial.
 
@@ -98,7 +98,7 @@ notices and all copyright and warranty notices.
 
 This permission applies only while the scale, closed-access and
 noncommercial conditions are all met. If the use becomes commercial,
-exceeds three Authorized Users, becomes public, or becomes organization
+exceeds twenty Authorized Users, becomes public, or becomes organization
 production use, this permission stops for that use at the transition.
 Continued use then requires prior written authorization from the
 copyright holder. This permission provides no AGPL-3.0 fallback.

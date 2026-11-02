@@ -10,7 +10,7 @@ The controlling files for current versions are:
 - `LICENSE`: short project notice and entry point;
 - `LICENSES/ALICE-SOURCE-AVAILABLE.md`: complete custom license;
 - `LICENSES/COMMUNITY-PERMISSION.md`: current noncommercial permission,
-  including the three-user scale limit; and
+  including the twenty-user scale limit; and
 - `THIRD_PARTY_LICENSES.md`: third-party notices.
 
 ## Version History
@@ -19,14 +19,14 @@ The controlling files for current versions are:
 | --- | --- |
 | v0.2.1 and earlier | MIT. Those grants remain valid and cannot be revoked. |
 | v0.3.0 | AGPL-3.0-or-later plus the original 20-user Community Exception. Its original files are preserved under `LICENSES/history/v0.3.0/`. |
-| v0.4.0 and later | Alice Noncommercial and Commercial Revenue-Sharing License v1.0 plus the current 3-user Community Permission. |
+| v0.4.0 and later | Alice Noncommercial and Commercial Revenue-Sharing License v1.0 plus the current 20-user Community Permission. |
 
 The historical materials document only the versions identified there.
 They do not create an AGPL-3.0 or MIT option for v0.4.0 or later.
 
 ## Current Noncommercial Use
 
-A closed deployment with no more than `MAX_AUTHORIZED_USERS = 3`
+A closed deployment with no more than `MAX_AUTHORIZED_USERS = 20`
 different natural persons may use the Software royalty-free when the use
 is noncommercial. Administrators count. Count every member who can
 interact through a QQ group or other shared conversation.
@@ -48,7 +48,7 @@ Organization production use also requires prior written authorization.
 A nonprofit organization does not qualify automatically for production
 or ordinary business operations.
 
-Noncommercial use above three Authorized Users likewise requires prior
+Noncommercial use above twenty Authorized Users likewise requires prior
 written authorization from the copyright holder. The current license has
 no automatic AGPL-3.0 fallback.
 

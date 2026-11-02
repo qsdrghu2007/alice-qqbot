@@ -64,7 +64,7 @@ expressly permitted below and in `LICENSES/COMMUNITY-PERMISSION.md`, or
 for a noncommercial use separately authorized in writing.
 
 Eligible closed, noncommercial deployments with no more than
-`MAX_AUTHORIZED_USERS = 3` are governed by the Small-Scale Noncommercial
+`MAX_AUTHORIZED_USERS = 20` are governed by the Small-Scale Noncommercial
 Community Permission in `LICENSES/COMMUNITY-PERMISSION.md`. That permission
 is part of this license and does not create an AGPL-3.0 option.
 
@@ -73,7 +73,7 @@ and closed noncommercial research may qualify when every condition is
 met. An organization's ordinary production or business operation does
 not qualify merely because the organization is nonprofit.
 
-Noncommercial use with more than three Authorized Users, use open to an
+Noncommercial use with more than twenty Authorized Users, use open to an
 unspecified public, or organization production use is not automatically
 permitted. It requires prior written authorization from the copyright
 holder. This license offers no AGPL-3.0 fallback for that use.
@@ -148,7 +148,7 @@ written commercial agreement.
 This permission lasts only while the use complies with this license and
 any applicable written authorization or commercial agreement.
 
-If a noncommercial use becomes Commercial Use, exceeds three Authorized
+If a noncommercial use becomes Commercial Use, exceeds twenty Authorized
 Users, becomes open to an unspecified public, or otherwise exceeds its
 authorization, permission for that use stops at the transition. Before
 continuing, the user must obtain the required written authorization.
