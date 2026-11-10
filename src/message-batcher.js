@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Alice-Source-Available
 // See LICENSE and LICENSES/ALICE-SOURCE-AVAILABLE.md.
 const DEFAULT_SILENT_MS = 2_000;
+const ACTIVE_CONVERSATION_WINDOW_MS = 3 * 60_000;
+const DEFAULT_IDLE_RETENTION_MS = ACTIVE_CONVERSATION_WINDOW_MS;
 const MAX_SEEN_EVENTS = 2_000;
 const MAX_SEMANTIC_EXTRA_MS = 1_000;
 const MIN_SEMANTIC_EXTRA_MS = 300;
@@ -140,6 +142,12 @@ function semanticMaxWait(base) {
   return Math.max(base + MIN_SEMANTIC_EXTRA_MS, Math.min(15_000, base * 3));
 }
 
+function normalizeSilentMs(value) {
+  return Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : DEFAULT_SILENT_MS;
+}
+
 export function calculateInputSilence(
   text,
   silentMs = DEFAULT_SILENT_MS,
@@ -262,6 +270,7 @@ export class MessageBatcher {
   constructor({
     handler,
     silentMs = DEFAULT_SILENT_MS,
+    idleRetentionMs = DEFAULT_IDLE_RETENTION_MS,
     logger = console,
     timers = globalThis,
     now = Date.now,
@@ -271,9 +280,11 @@ export class MessageBatcher {
       throw new TypeError("timers 必须提供 setTimeout/clearTimeout");
     }
     this.handler = handler;
-    this.silentMs = Number.isFinite(silentMs) && silentMs > 0
-      ? Math.round(silentMs)
-      : DEFAULT_SILENT_MS;
+    this.silentMs = normalizeSilentMs(silentMs);
+    this.idleRetentionMs =
+      Number.isFinite(idleRetentionMs) && idleRetentionMs >= 0
+        ? Math.round(idleRetentionMs)
+        : DEFAULT_IDLE_RETENTION_MS;
     this.logger = logger;
     this.timers = timers;
     this.now = now;
@@ -299,14 +310,17 @@ export class MessageBatcher {
         supplements: [],
         phase: "idle",
         timer: null,
+        idleTimer: null,
         controller: null,
         running: null,
         collectStartedAt: null,
         collectCount: 0,
+        lastTurnAt: null,
         recentBursts: [],
       };
       this._states.set(key, state);
     }
+    this._cancelIdleCleanup(state);
 
     if (state.phase === "generating" || state.phase === "delaying") {
       if (
@@ -334,6 +348,7 @@ export class MessageBatcher {
     this._stopped = true;
     for (const state of this._states.values()) {
       this._clearTimer(state);
+      this._cancelIdleCleanup(state);
       state.controller?.abort();
     }
     this._states.clear();
@@ -344,8 +359,30 @@ export class MessageBatcher {
     return this._states.size;
   }
 
+  updateConfig({ inputDelayMs, idleRetentionMs } = {}) {
+    if (inputDelayMs !== undefined) {
+      this.silentMs = normalizeSilentMs(inputDelayMs);
+      for (const state of this._states.values()) {
+        if (state.phase === "collecting") this._schedule(state);
+      }
+    }
+    if (idleRetentionMs !== undefined) {
+      this.idleRetentionMs =
+        Number.isFinite(idleRetentionMs) && idleRetentionMs >= 0
+          ? Math.round(idleRetentionMs)
+          : DEFAULT_IDLE_RETENTION_MS;
+      for (const state of this._states.values()) {
+        if (state.phase === "idle") {
+          this._cancelIdleCleanup(state);
+          this._scheduleIdleCleanup(state);
+        }
+      }
+    }
+  }
+
   _schedule(state) {
     if (this._stopped) return;
+    this._cancelIdleCleanup(state);
     this._clearTimer(state);
     state.phase = "collecting";
     if (state.collectStartedAt === null) {
@@ -380,6 +417,7 @@ export class MessageBatcher {
     if (this._stopped || state.running) return;
     if (!state.pending.length) {
       state.phase = "idle";
+      this._scheduleIdleCleanup(state);
       return;
     }
 
@@ -396,7 +434,12 @@ export class MessageBatcher {
     let committed = false;
 
     const events = active.map((item) => item.event);
-    const event = mergeEvents(events);
+    const turnStartedAt = this.now();
+    const conversationActive =
+      Number.isFinite(state.lastTurnAt) &&
+      turnStartedAt - state.lastTurnAt <= ACTIVE_CONVERSATION_WINDOW_MS;
+    state.lastTurnAt = turnStartedAt;
+    const event = { ...mergeEvents(events), conversationActive };
     const context = active[active.length - 1]?.context ?? {};
     const onBeforeSend = () => {
       if (state.active !== active) throw new BatchCancelledError();
@@ -447,7 +490,10 @@ export class MessageBatcher {
       state.controller = null;
       if (this._stopped) return;
       if (state.pending.length) this._schedule(state);
-      else state.phase = "idle";
+      else {
+        state.phase = "idle";
+        this._scheduleIdleCleanup(state);
+      }
     }
   }
 
@@ -469,5 +515,33 @@ export class MessageBatcher {
     if (!state.timer) return;
     this.timers.clearTimeout(state.timer);
     state.timer = null;
+  }
+
+  _scheduleIdleCleanup(state) {
+    this._cancelIdleCleanup(state);
+    if (this._stopped || this.idleRetentionMs <= 0) return;
+    state.idleTimer = this.timers.setTimeout(() => {
+      state.idleTimer = null;
+      if (
+        this._stopped ||
+        state.phase !== "idle" ||
+        state.pending.length ||
+        state.active ||
+        state.supplements.length ||
+        state.running ||
+        state.controller ||
+        state.timer
+      ) {
+        return;
+      }
+      this._states.delete(state.key);
+    }, this.idleRetentionMs);
+    state.idleTimer?.unref?.();
+  }
+
+  _cancelIdleCleanup(state) {
+    if (!state.idleTimer) return;
+    this.timers.clearTimeout(state.idleTimer);
+    state.idleTimer = null;
   }
 }

@@ -150,6 +150,13 @@ export function explicitMemoryDirective(text) {
   return { kind: "remember", content };
 }
 
+export function explicitMemoryContent(event, content) {
+  const text = String(content ?? "").trim();
+  return event?.scope === "group"
+    ? `群成员${String(event.userId ?? "未知").slice(0, 40)}要求保存：${text}`
+    : text;
+}
+
 export function parseMemoryDecision(text) {
   const parsed = extractJson(text);
   if (!parsed) return null;
@@ -185,7 +192,12 @@ export function buildJudgeMessages({
   const recent = history
     .slice(-6)
     .map((message) => {
-      const role = message.role === "user" ? "用户" : "Alice";
+      const role =
+        message.role === "user"
+          ? scope === "group"
+            ? `群成员${String(message.speakerId ?? "未知").slice(0, 40)}`
+            : "用户"
+          : "Bot";
       return `${role}：${truncate(message.content, 300)}`;
     })
     .join("\n");
@@ -271,7 +283,7 @@ export class MemoryManager {
       decision = {
         shouldRemember: true,
         type: "fact",
-        content: explicit.content,
+        content: explicitMemoryContent(event, explicit.content),
         importance: 9,
         reason: "用户明确要求记住",
       };

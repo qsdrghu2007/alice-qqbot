@@ -13,6 +13,7 @@ import { defaultConfig, loadConfig, saveConfig } from "./config.js";
 import { ConversationState } from "./conversation-state.js";
 import {
   ConversationDeliveryQueue,
+  calculateInputReadingDelay,
   calculateReplyDelay,
   conversationDeliveryKey,
   deliverPlannedReply,
@@ -50,6 +51,58 @@ export function createConfigController(initialConfig) {
       currentConfig = nextConfig;
       return currentConfig;
     },
+  };
+}
+
+export function resolveRuntimeMode(config, env = process.env) {
+  if (config?.runtimeMode === "basic" || config?.runtimeMode === "full") {
+    return { mode: config.runtimeMode, source: "config" };
+  }
+  if (env?.ALICE_RUNTIME_MODE === "basic" || env?.ALICE_RUNTIME_MODE === "full") {
+    return { mode: env.ALICE_RUNTIME_MODE, source: "environment" };
+  }
+  return { mode: "basic", source: "default" };
+}
+
+export function enforceBasicMode(config) {
+  return {
+    ...config,
+    autonomy: { ...(config?.autonomy ?? {}), enabled: false },
+    qzone: { ...(config?.qzone ?? {}), enabled: false, autoPublish: false },
+    qzoneComments: { ...(config?.qzoneComments ?? {}), enabled: false },
+    stickers: {
+      ...(config?.stickers ?? {}),
+      enabled: false,
+      autoCollect: false,
+    },
+    chatExit: { ...(config?.chatExit ?? {}), enabled: false },
+    followUp: { ...(config?.followUp ?? {}), enabled: false },
+    conversationState: {
+      ...(config?.conversationState ?? {}),
+      enabled: false,
+      reviewEnabled: false,
+    },
+    userUnderstanding: { ...(config?.userUnderstanding ?? {}), enabled: false },
+    policy: { ...(config?.policy ?? {}), autoActions: false },
+  };
+}
+
+export function applyRuntimeMode(config, runtimeMode = resolveRuntimeMode(config)) {
+  return runtimeMode.mode === "basic" ? enforceBasicMode(config) : config;
+}
+
+export function createRuntimeConfigController(initialConfig, { env = process.env } = {}) {
+  const controller = createConfigController(initialConfig);
+  let runtimeMode = resolveRuntimeMode(initialConfig, env);
+  const setStoredConfig = (storedConfig) => {
+    runtimeMode = resolveRuntimeMode(storedConfig, env);
+    return controller.setConfig(applyRuntimeMode(storedConfig, runtimeMode));
+  };
+  setStoredConfig(initialConfig);
+  return {
+    getConfig: controller.getConfig,
+    getRuntimeMode: () => runtimeMode,
+    setStoredConfig,
   };
 }
 
@@ -159,7 +212,11 @@ export function createReplyFlow({
         ? delayOverride
         : calculateReplyDelay(segmentReply(reply, planned[0]), latest.replyDelay, {
             random,
-          });
+            event,
+          }) +
+          (latest.replyDelay?.enabled === false
+            ? 0
+            : calculateInputReadingDelay(event.text));
     notify("delayed", { delayMs });
     const outcome = await deliverPlannedReply({
       queue: delivery,
@@ -177,14 +234,14 @@ export function createReplyFlow({
           conversationAllowed(event, current.policy)
         );
       },
-      pauseBetween: (segmentIndex) =>
+      pauseBetween: (segmentIndex, _reply, segmentSignal) =>
         sleep(
           calculateReplyDelay(
             segmentReply(reply, planned[segmentIndex]),
             latest.replyDelay,
-            { random },
+            { random, event },
           ),
-          signal,
+          segmentSignal,
         ),
       beforeFirstSend: beforeSend,
       afterSegmentSent,
@@ -285,7 +342,11 @@ export function createReplyFlow({
             safeLog(logger, "warn", "chat activity clear failed", error);
           }
         }
-        return { status: "suppressed", duplicate: Boolean(reply.duplicate) };
+        return {
+          status: "suppressed",
+          duplicate: Boolean(reply.duplicate),
+          ...(reply.silent ? { silent: true } : {}),
+        };
       }
 
       let firstSegmentCommitted = false;
@@ -367,7 +428,7 @@ export function createReplyFlow({
 
 async function main() {
   const logger = console;
-  const controller = createConfigController(await loadConfig(ROOT));
+  const controller = createRuntimeConfigController(await loadConfig(ROOT));
   const getConfig = controller.getConfig;
   const delivery = new ConversationDeliveryQueue();
   const store = new Store(ROOT);
@@ -476,7 +537,6 @@ async function main() {
   groupChat.setDeliver((event, options) =>
     replyFlow.processEvent(onebot, event, options),
   );
-
   const receivedEvents = new Map();
   const inflightEvents = new Map();
 
@@ -514,6 +574,9 @@ async function main() {
 
   async function receive(adapter, event) {
     const current = getConfig();
+    if (event.scope === "group" && current.groupChat?.enabled !== true) {
+      return { status: "ignored" };
+    }
     if (
       (current.policy?.paused && !isLegalCommandText(event.text)) ||
       !replyFlow.conversationAllowed(event, current.policy)
@@ -521,9 +584,9 @@ async function main() {
       return { status: "suppressed" };
     }
 
-    if (adapter === onebot && event.scope === "group") {
+    if (event.scope === "group" && event.channel === "onebot") {
       const groupRoute = await groupChat.route(event);
-      if (!groupRoute.explicit) return { status: "observed" };
+      if (!groupRoute.explicit) return groupRoute;
     }
 
     if (event.channel !== "local") {
@@ -599,11 +662,15 @@ async function main() {
   await autonomy.init();
 
   async function persistConfig(root, patch) {
-    return controller.setConfig(await saveConfig(root, patch));
+    const stored = await saveConfig(root, patch);
+    controller.setStoredConfig(stored);
+    return stored;
   }
 
   async function onConfigChanged(next, { policyOnly = false } = {}) {
-    controller.setConfig(next);
+    const effective = controller.setStoredConfig(next);
+    batcher.updateConfig({ inputDelayMs: effective.inputDelayMs });
+    await groupChat.reconcile?.();
     if (!policyOnly) {
       await autonomy.reconcile();
       await qzoneComments.reconcile();
@@ -619,6 +686,8 @@ async function main() {
     server = createWebServer({
       root: ROOT,
       getConfig,
+      getRuntimeMode: controller.getRuntimeMode,
+      getStoredConfig: () => loadConfig(ROOT),
       saveConfig: persistConfig,
       store,
       engine,

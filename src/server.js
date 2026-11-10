@@ -23,8 +23,10 @@ const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PUBLIC_DIR = path.resolve(MODULE_DIR, "..", "public");
 const OWNER_ID = "local-owner";
 const MAX_JSON_BYTES = 512 * 1024;
-const MAX_IMPORT_BYTES = 16 * 1024 * 1024;
-const MAX_STICKER_UPLOAD_BYTES = 8 * 1024 * 1024;
+const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
+const MAX_STICKER_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_STICKER_UPLOAD_BYTES =
+  Math.ceil((MAX_STICKER_IMAGE_BYTES * 4) / 3) + 64 * 1024;
 const MAX_TEXT_BYTES = 20 * 1024;
 const STATIC_TYPES = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -84,6 +86,19 @@ function sendJson(res, status, payload, extraHeaders = {}) {
     ...extraHeaders,
   });
   res.end(body);
+}
+
+function runtimeCapabilitiesFor(runtimeMode) {
+  const basic = runtimeMode === "basic";
+  return {
+    basicMode: basic,
+    space: !basic,
+    stickers: !basic,
+    proactivePrivateMessages: !basic,
+    review: !basic,
+    userUnderstanding: !basic,
+    externalActions: !basic,
+  };
 }
 
 function sendEmpty(res, status = 204) {
@@ -572,8 +587,11 @@ export function generateConsoleToken() {
 export function createWebServer({
   root,
   token = generateConsoleToken(),
+  basicMode = false,
   publicDir = path.join(root, "public"),
   getConfig,
+  getRuntimeMode,
+  getStoredConfig,
   saveConfig,
   store,
   engine,
@@ -593,9 +611,31 @@ export function createWebServer({
   if (typeof root !== "string" || !root) throw new TypeError("root is required");
   if (typeof token !== "string" || token.length < 16) throw new TypeError("token is too short");
   if (typeof getConfig !== "function") throw new TypeError("getConfig is required");
+  if (getRuntimeMode !== undefined && typeof getRuntimeMode !== "function") {
+    throw new TypeError("getRuntimeMode must be a function");
+  }
+  if (getStoredConfig !== undefined && typeof getStoredConfig !== "function") {
+    throw new TypeError("getStoredConfig must be a function");
+  }
   if (typeof saveConfig !== "function") throw new TypeError("saveConfig is required");
   if (!store) throw new TypeError("store is required");
   if (!engine || typeof engine.handle !== "function") throw new TypeError("engine is required");
+
+  const currentRuntimeMode = () => {
+    const value = getRuntimeMode?.();
+    if (typeof value === "string" && ["basic", "full"].includes(value)) {
+      return { mode: value, source: "runtime" };
+    }
+    if (value && ["basic", "full"].includes(value.mode)) {
+      return {
+        mode: value.mode,
+        source: ["config", "environment", "default"].includes(value.source)
+          ? value.source
+          : "runtime",
+      };
+    }
+    return { mode: basicMode ? "basic" : "full", source: "runtime" };
+  };
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -654,6 +694,8 @@ export function createWebServer({
           autonomy: statuses[4],
           groupChat: statuses[5],
           engine: statuses[0],
+          runtimeModeInfo: currentRuntimeMode(),
+          runtimeCapabilities: runtimeCapabilitiesFor(currentRuntimeMode().mode),
           note: "仅监听 127.0.0.1；连接与发布状态均来自实际适配器。",
         });
         return;
@@ -801,7 +843,13 @@ export function createWebServer({
       }
 
       if (route === "/api/config" && req.method === "GET") {
-        sendJson(res, 200, publicConfig(await getConfig()));
+        sendJson(res, 200, {
+          ...publicConfig(
+            await (getStoredConfig === undefined ? getConfig() : getStoredConfig()),
+          ),
+          runtimeModeInfo: currentRuntimeMode(),
+          runtimeCapabilities: runtimeCapabilitiesFor(currentRuntimeMode().mode),
+        });
         return;
       }
 
@@ -810,13 +858,22 @@ export function createWebServer({
         if (!plainObject(patch)) {
           throw new RequestError(400, "配置更新必须是对象", "VALIDATION_ERROR");
         }
-        const saved = await saveConfig(root, patch);
+        const {
+          runtimeCapabilities: _runtimeCapabilities,
+          runtimeModeInfo: _runtimeModeInfo,
+          basicMode: _basicMode,
+          ...configPatch
+        } = patch;
+        const saved = await saveConfig(root, configPatch);
         await configChanged?.(saved);
+        const stored = getStoredConfig === undefined ? saved : await getStoredConfig();
         sendJson(res, 200, {
           ok: true,
-          config: publicConfig(saved),
+          config: publicConfig(stored),
+          runtimeModeInfo: currentRuntimeMode(),
+          runtimeCapabilities: runtimeCapabilitiesFor(currentRuntimeMode().mode),
           transportRestartRequired:
-            Object.hasOwn(patch, "qq") || Object.hasOwn(patch, "onebot"),
+            Object.hasOwn(configPatch, "qq") || Object.hasOwn(configPatch, "onebot"),
         });
         return;
       }

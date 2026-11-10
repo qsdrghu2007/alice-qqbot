@@ -232,6 +232,22 @@ test("explicit remember requests bypass the importance threshold and AI judge", 
   assert.equal(memories[0].text, "我的生日是 5 月 1 日");
   assert.equal(memories[0].importance, 9);
   assert.equal(memories[0].source, "auto");
+
+  const groupKey = JSON.stringify(["group-memory", "onebot", "group-1"]);
+  await manager.afterTurn({
+    event: event({
+      scope: "group",
+      groupId: "group-1",
+      conversationId: "group-1",
+      userId: "10001",
+      text: "请记住：我们周末一起玩",
+    }),
+    memoryKey: groupKey,
+    config,
+  });
+  const groupMemories = await store.memories(groupKey);
+  assert.equal(calls, 0);
+  assert.equal(groupMemories[0].text, "群成员10001要求保存：我们周末一起玩");
 });
 
 test("forget directives, low importance, invalid JSON, and disabled modes never save", async (t) => {
@@ -317,12 +333,19 @@ test("group memory is saved into the shared group scope with group context", asy
   assert.equal(memories[0].text, "群成员10001喜欢猫咪");
   const prompt = buildJudgeMessages({
     text: "我们群里都喜欢猫",
+    history: [
+      { role: "user", content: "我喜欢猫", speakerId: "10001" },
+      { role: "assistant", content: "记下了" },
+      { role: "user", content: "我更喜欢狗", speakerId: "10002" },
+    ],
     scope: "group",
     groupId: "group-1",
     userId: "10001",
   });
   assert.match(prompt[1].content, /当前场景：群聊/);
   assert.match(prompt[1].content, /群号 group-1/);
+  assert.match(prompt[1].content, /群成员10001：我喜欢猫/);
+  assert.match(prompt[1].content, /群成员10002：我更喜欢狗/);
   assert.match(request.messages[0].content, /群内成员共享/);
   assert.equal((await store.memories(JSON.stringify(["private-memory", "onebot", "10001"]))).length, 0);
 });

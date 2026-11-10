@@ -73,7 +73,19 @@ function isSimpleReply(text) {
   );
 }
 
-export function calculateReplyDelay(reply, settings = {}, { random = Math.random } = {}) {
+function hasOngoingPrivateConversation(event) {
+  return (
+    event?.channel !== "local" &&
+    event?.scope === "private" &&
+    event?.conversationActive === true
+  );
+}
+
+export function calculateReplyDelay(
+  reply,
+  settings = {},
+  { random = Math.random, event = null } = {},
+) {
   const config = { ...replyDelayDefaults, ...(settings ?? {}) };
   if (config.enabled === false) return 0;
   if (reply?.stickerOnly === true) return 0;
@@ -85,7 +97,9 @@ export function calculateReplyDelay(reply, settings = {}, { random = Math.random
   const maxMs = Math.max(0, Number(config.maxMs) || 0);
   let delay = baseMs + characters * msPerChar;
   if (hasSlowPacingHint(reply)) delay *= 1.25;
-  else if (isSimpleReply(reply?.text)) delay *= 0.85;
+  else if (isSimpleReply(reply?.text)) {
+    delay *= hasOngoingPrivateConversation(event) ? 0.72 : 0.85;
+  }
   const jitter = Math.min(0.5, Math.max(0, Number(config.jitter) || 0));
   if (jitter > 0) {
     delay *= 1 + (random() * 2 - 1) * jitter;
@@ -98,6 +112,20 @@ const UNSAFE_SEGMENT_PATTERN =
   /```|`[^`\n]+`|https?:\/\/|www\.|(?:^|\n)\s*(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|\|.*\|)|\b(?:JSON|XML|YAML|HTML)\b/iu;
 const ACTION_RESULT_PATTERN =
   /已(?:加入本次回复|发送|发布|点赞|收藏)|发送失败|发布结果不确定|结果不确定|操作已执行|QQ\s*空间|表情包已|图片已/iu;
+const INPUT_READING_THRESHOLD = 120;
+const INPUT_READING_MS_PER_CHAR = 8;
+const MAX_INPUT_READING_MS = 3_000;
+
+export function calculateInputReadingDelay(text) {
+  const characters = visibleCharacterCount(text);
+  if (characters <= INPUT_READING_THRESHOLD) return 0;
+  return Math.min(
+    MAX_INPUT_READING_MS,
+    Math.round(
+      (characters - INPUT_READING_THRESHOLD) * INPUT_READING_MS_PER_CHAR,
+    ),
+  );
+}
 
 function naturalSentenceParts(text) {
   const value = String(text ?? "").trim();
@@ -287,51 +315,71 @@ export async function deliverPlannedReply({
       // Status callbacks must not affect delivery.
     }
   };
-  return queue.enqueue(key, {
+  const queueController = new AbortController();
+  const forwardAbort = () => queueController.abort();
+  let detachAbort = () => {
+    signal?.removeEventListener?.("abort", forwardAbort);
+    detachAbort = () => {};
+  };
+  if (signal?.aborted) {
+    queueController.abort();
+    detachAbort = () => {};
+  } else if (signal) {
+    signal.addEventListener?.("abort", forwardAbort, { once: true });
+  } else {
+    detachAbort = () => {};
+  }
+  const delivery = queue.enqueue(key, {
     delayMs,
-    signal,
+    signal: queueController.signal,
     run: async () => {
       let firstSendStarted = false;
       const sentSegments = [];
-      for (const segment of segments) {
-        if (segment.index > 0 && pauseBetween) {
-          await pauseBetween(segment.index, reply);
-        }
-        if (!isAllowed()) {
-          notify("suppressed", { sentSegments });
-          return {
-            status: sentSegments.length ? "partial" : "suppressed",
-            sentSegments,
-            suppressedAtSegment: segment.index,
-          };
-        }
-        if (!firstSendStarted) {
-          await beforeFirstSend?.();
-          firstSendStarted = true;
-          notify("sending");
-        }
-        try {
-          await send(event, segmentReply(reply, segment));
-        } catch (error) {
-          notify("failed", {
-            failedAtSegment: segment.index,
-            sentSegments,
+      try {
+        for (const segment of segments) {
+          if (segment.index > 0 && pauseBetween) {
+            await pauseBetween(segment.index, reply, queueController.signal);
+          }
+          if (!isAllowed()) {
+            notify("suppressed", { sentSegments });
+            return {
+              status: sentSegments.length ? "partial" : "suppressed",
+              sentSegments,
+              suppressedAtSegment: segment.index,
+            };
+          }
+          if (!firstSendStarted) {
+            await beforeFirstSend?.();
+            detachAbort();
+            firstSendStarted = true;
+            notify("sending");
+          }
+          try {
+            await send(event, segmentReply(reply, segment));
+          } catch (error) {
+            notify("failed", {
+              failedAtSegment: segment.index,
+              sentSegments,
+            });
+            return {
+              status: sentSegments.length ? "partial" : "failed",
+              sentSegments,
+              failedAtSegment: segment.index,
+              error,
+            };
+          }
+          sentSegments.push(segment);
+          await afterSegmentSent?.(segment, {
+            first: segment.index === 0,
+            last: segment.index === segments.length - 1,
           });
-          return {
-            status: sentSegments.length ? "partial" : "failed",
-            sentSegments,
-            failedAtSegment: segment.index,
-            error,
-          };
         }
-        sentSegments.push(segment);
-        await afterSegmentSent?.(segment, {
-          first: segment.index === 0,
-          last: segment.index === segments.length - 1,
-        });
+        notify("sent", { sentSegments });
+        return { status: "sent", sentSegments };
+      } finally {
+        detachAbort();
       }
-      notify("sent", { sentSegments });
-      return { status: "sent", sentSegments };
     },
   });
+  return delivery.finally(detachAbort);
 }

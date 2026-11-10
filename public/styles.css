@@ -564,6 +564,60 @@ textarea {
   margin-left: auto;
 }
 
+.runtime-mode-button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 11px;
+  color: var(--warning);
+  font: inherit;
+  text-align: left;
+  background: var(--warm-soft);
+  border: 1px solid #e5cbb8;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.runtime-mode-button:hover {
+  border-color: var(--warm);
+}
+
+.runtime-mode-button.is-full {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: #b8d8cf;
+}
+
+.runtime-mode-icon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.runtime-mode-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.runtime-mode-copy strong {
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.runtime-mode-copy small {
+  color: currentColor;
+  font-size: 9px;
+  line-height: 1.2;
+  opacity: 0.75;
+}
+
 .topbar-status .mobile-pause-button {
   display: none;
 }
@@ -1527,6 +1581,21 @@ textarea {
   border-radius: var(--radius-small);
 }
 
+.capability-notice {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  color: var(--warning);
+  font-size: 11px;
+  line-height: 1.55;
+  background: #faf1df;
+  border: 1px solid #ead8b4;
+  border-radius: var(--radius-small);
+}
+
+[data-capability-disabled="true"] {
+  cursor: not-allowed;
+}
+
 .settings-actions {
   display: flex;
   min-height: 42px;
@@ -1981,6 +2050,22 @@ textarea {
 
   .topbar-status {
     flex-wrap: nowrap;
+  }
+
+  .runtime-mode-button {
+    min-height: 32px;
+    gap: 5px;
+    padding: 3px 8px;
+  }
+
+  .runtime-mode-copy small {
+    display: none;
+  }
+
+  .runtime-mode-icon {
+    width: 15px;
+    height: 15px;
+    flex-basis: 15px;
   }
 
   .topbar-status .mobile-pause-button {

@@ -39,3 +39,21 @@ examples. Functional defaults and public project settings remain in the source.
 Before publishing a future snapshot, review all changed files, run the complete
 verification commands, and scan the candidate files for credentials and
 personal data.
+
+## v0.6.0 Release Record
+
+- Runtime source version: `0.6.0` in both `package.json` and the root
+  `package-lock.json` entry. The `/source` route must read this package version
+  instead of carrying a separate hard-coded release number.
+- Public documentation includes `docs/RELEASE-v0.6.0.md` with upgrade notes,
+  the external NapCat link and start paths, runtime-mode behavior, and known
+  end-to-end limitations.
+- Release assets remain source-only. Do not add `data/`, `napcat/`,
+  `node_modules/`, `backups/`, `releases/`, local logs, credentials, or cookies.
+- Candidate validation for this release recorded `npm test` as 384 passed,
+  0 skipped, and 0 failed. The candidate also passed `npm run check`,
+  `node --check public/app.js`, and the release-file/credential checks described
+  above.
+- These checks do not constitute real QQ or real-model end-to-end validation.
+  Confirm the published tag, release asset hash, and source archive contents
+  again immediately before publishing.

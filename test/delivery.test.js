@@ -5,6 +5,7 @@ import test from "node:test";
 
 import {
   ConversationDeliveryQueue,
+  calculateInputReadingDelay,
   calculateReplyDelay,
   calculateSegmentGap,
   canSegmentReply,
@@ -37,14 +38,14 @@ test("reply delay follows visible character count, cap, and sticker rules", () =
   assert.equal(calculateReplyDelay({ text: "啊".repeat(1000) }, noJitter), 6000);
   assert.equal(
     calculateReplyDelay({ text: "啊".repeat(1000) }, { ...noJitter, maxMs: 0 }),
-    70500,
+    70_500,
   );
   assert.equal(
     calculateReplyDelay(
       { text: "啊".repeat(1000) },
       { ...noJitter, baseMs: 500, msPerChar: 120, maxMs: 0 },
     ),
-    120500,
+    120_500,
   );
   assert.equal(
     calculateReplyDelay(
@@ -96,6 +97,25 @@ test("simple replies are faster while tool, web, recall, and serious pacing is s
     calculateReplyDelay({ text: "查到了。", pacingHints: { web: true } }, noJitter),
     calculateReplyDelay({ text: "查到了。", needsSlowPacing: true }, noJitter),
   );
+});
+
+test("private conversation pacing follows the recent-turn signal and bounds input reading", () => {
+  const privateEvent = {
+    channel: "onebot",
+    scope: "private",
+    conversationId: "10001",
+  };
+  const inactiveShort = calculateReplyDelay({ text: "好呀" }, noJitter, {
+    event: { ...privateEvent, conversationActive: false },
+  });
+  const continuingShort = calculateReplyDelay({ text: "好呀" }, noJitter, {
+    event: { ...privateEvent, conversationActive: true },
+  });
+
+  assert.ok(continuingShort < inactiveShort);
+  assert.equal(calculateInputReadingDelay("短消息"), 0);
+  assert.equal(calculateInputReadingDelay("长".repeat(300)), 1_440);
+  assert.equal(calculateInputReadingDelay("长".repeat(2_000)), 3_000);
 });
 
 test("reply planning creates at most two natural sentences and preserves the text", () => {
@@ -267,6 +287,42 @@ test("planned delivery commits only successful segments and preserves partial fa
   assert.deepEqual(committed, [{ text: "第一段。", final: false }]);
 });
 
+test("a new input cannot abort the second segment after the first send boundary", async () => {
+  const sent = [];
+  let gapResolve;
+  let gapSignal;
+  const controller = new AbortController();
+  const segments = [
+    { index: 0, total: 2, text: "第一段。" },
+    { index: 1, total: 2, text: "第二段。" },
+  ];
+  const pending = deliverPlannedReply({
+    queue: new ConversationDeliveryQueue(),
+    key: "onebot:private:segments",
+    event: { channel: "onebot", scope: "private", conversationId: "segments" },
+    reply: { text: "第一段。第二段。" },
+    segments,
+    signal: controller.signal,
+    send: async (_event, reply) => {
+      sent.push(reply.text);
+    },
+    pauseBetween: (_index, _reply, signal) => {
+      gapSignal = signal;
+      return new Promise((resolve) => {
+        gapResolve = resolve;
+      });
+    },
+  });
+
+  while (sent.length === 0) await tick();
+  controller.abort();
+  await tick();
+  assert.equal(gapSignal.aborted, false);
+  gapResolve();
+  assert.equal((await pending).status, "sent");
+  assert.deepEqual(sent, ["第一段。", "第二段。"]);
+});
+
 test("queue delay and previous work are cancelled before the send boundary", async () => {
   let delaySignal;
   const queue = new ConversationDeliveryQueue({
@@ -297,8 +353,8 @@ test("queue delay and previous work are cancelled before the send boundary", asy
     },
   });
   await tick();
-  assert.equal(delaySignal, controller.signal);
   controller.abort();
+  assert.equal(delaySignal.aborted, true);
   await assert.rejects(pending, (error) => error.code === "CANCELLED");
   assert.equal(sent, 0);
 

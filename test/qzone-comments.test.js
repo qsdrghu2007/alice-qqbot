@@ -59,7 +59,8 @@ async function fixture(
   t,
   {
     overrides = {},
-    reply = "[回复] 好呀",
+    reply = "好呀，这个确实不错",
+    judge = '{"send":true,"reason":"有具体内容，可以自然回应"}',
     now,
     state,
     directReplyCode = 0,
@@ -91,6 +92,7 @@ async function fixture(
   const moods = { 123456: [], 333333: [] };
   const requests = [];
   let chatCalls = 0;
+  const prompts = [];
   const onebot = {
     async call(action, params) {
       if (typeof onebotCall === "function") {
@@ -147,9 +149,13 @@ async function fixture(
     ...(typeof isReady === "function" ? { isReady } : {}),
     ...(timers ? { timers } : {}),
     logger: { info() {}, warn() {}, error() {}, debug() {} },
-    chat: async () => {
+    chat: async (request) => {
       chatCalls += 1;
-      return { content: reply };
+      prompts.push(request);
+      const isJudge = String(request?.messages?.[0]?.content ?? "").includes(
+        "独立判断器",
+      );
+      return { content: isJudge ? judge : reply };
     },
   });
   await manager.init();
@@ -160,6 +166,7 @@ async function fixture(
     moods,
     requests,
     chatCalls: () => chatCalls,
+    prompts,
     statePath: path.join(root, "data", "qzone-comments.json"),
   };
 }
@@ -305,12 +312,15 @@ test("own-post new comment is replied through the nested reply endpoint", async 
   const state = JSON.parse(await readFile(f.statePath, "utf8"));
   assert.equal(state.seenComments["123456_post-1_new-1"].status, "replied");
   assert.equal(state.stats.replies, 1);
+  assert.equal(f.chatCalls(), 2);
+  assert.match(f.prompts[1].messages[0].content, /独立判断器/);
+  assert.match(f.prompts[1].messages[0].content, /"send"/);
 });
 
 test("self, non-friend, blocked, and AI-skipped comments are not sent", async (t) => {
   const f = await fixture(t, {
     overrides: { blockedUsers: ["444"], aiDecide: true },
-    reply: "[不回复]",
+    judge: '{"send":false,"reason":"没有值得接话的内容"}',
   });
   f.moods["123456"] = [ownMood()];
   await f.manager.pollNow();
@@ -331,6 +341,109 @@ test("self, non-friend, blocked, and AI-skipped comments are not sent", async (t
   assert.equal(state.seenComments["123456_post-1_stranger"].status, "filtered");
   assert.equal(state.seenComments["123456_post-1_blocked"].status, "filtered");
   assert.equal(state.seenComments["123456_post-1_ai-skip"].status, "skipped");
+});
+
+test("obvious emoji and advertising comments are skipped before any AI call", async (t) => {
+  const f = await fixture(t);
+  f.moods["123456"] = [ownMood()];
+  await f.manager.pollNow();
+  f.moods["123456"] = [
+    ownMood([
+      { id: "emoji", uin: "222", name: "好友", content: "😀😀😀" },
+      { id: "advert", uin: "222", name: "好友", content: "扫码返利优惠券" },
+    ]),
+  ];
+
+  await f.manager.pollNow();
+
+  assert.equal(f.chatCalls(), 0);
+  assert.equal(f.requests.length, 0);
+  const state = JSON.parse(await readFile(f.statePath, "utf8"));
+  assert.equal(state.seenComments["123456_post-1_emoji"].status, "skipped");
+  assert.equal(state.seenComments["123456_post-1_advert"].status, "skipped");
+});
+
+test("links and topic words alone are left to AI judgment", async (t) => {
+  const f = await fixture(t);
+  f.moods["123456"] = [ownMood()];
+  await f.manager.pollNow();
+  f.moods["123456"] = [
+    ownMood([
+      {
+        id: "link",
+        uin: "222",
+        name: "好友",
+        content: "看看这个 https://example.com/note",
+      },
+      {
+        id: "job",
+        uin: "222",
+        name: "好友",
+        content: "兼职刚下班，好累",
+      },
+    ]),
+  ];
+
+  await f.manager.pollNow();
+
+  assert.equal(f.chatCalls(), 4);
+  assert.equal(f.requests.filter((item) => item.kind === "reply").length, 2);
+  const state = JSON.parse(await readFile(f.statePath, "utf8"));
+  assert.equal(state.seenComments["123456_post-1_link"].status, "replied");
+  assert.equal(state.seenComments["123456_post-1_job"].status, "replied");
+});
+
+test("comment prompts include bounded speakers from the current thread only", async (t) => {
+  const f = await fixture(t, {
+    state: {
+      version: 2,
+      initialized: true,
+      stats: {},
+      ownPosts: {},
+      externalPosts: {},
+      seenComments: {
+        "123456_post-1_11": {
+          at: new Date().toISOString(),
+          status: "replied",
+        },
+      },
+    },
+  });
+  f.moods["123456"] = [
+    ownMood([
+      {
+        tid: 11,
+        uin: 222,
+        name: "好友",
+        content: "这家店在哪里",
+        reply_num: 3,
+        list_3: [
+          { tid: 1101, uin: "123456", name: "Alice", content: "在南门附近" },
+          { tid: 1102, uin: "333", name: "阿青", content: "楼上问我吗" },
+          {
+            tid: 1103,
+            uin: 222,
+            name: "好友",
+            content: "那我周末去看看",
+            createTime: Math.floor(Date.now() / 1_000),
+          },
+        ],
+      },
+      { tid: 12, uin: 444, name: "另一个人", content: "无关楼层" },
+    ]),
+  ];
+
+  await f.manager.pollNow();
+
+  const generation = f.prompts[0].messages[1].content;
+  const judgment = f.prompts[1].messages[1].content;
+  assert.match(generation, /同一楼层中本条附近/);
+  assert.match(generation, /Alice（本人）: 在南门附近/);
+  assert.match(generation, /阿青: 楼上问我吗/);
+  assert.doesNotMatch(generation, /无关楼层/);
+  assert.match(judgment, /"threadContext"/);
+  assert.match(judgment, /阿青/);
+  assert.doesNotMatch(judgment, /无关楼层/);
 });
 
 test("@ + QZone link comments once and records the external post", async (t) => {
@@ -364,7 +477,7 @@ test("@ + QZone link comments once and records the external post", async (t) => 
   assert.equal(f.requests.filter((item) => item.kind === "comment").length, 1);
   const state = JSON.parse(await readFile(f.statePath, "utf8"));
   assert.equal(state.externalPosts["333333_external-1"].rootCommentId, "root-1");
-  assert.equal(state.externalPosts["333333_external-1"].rootText, "好呀");
+  assert.equal(state.externalPosts["333333_external-1"].rootText, "好呀，这个确实不错");
   assert.equal(state.stats.externalComments, 1);
 });
 

@@ -27,38 +27,38 @@
 - 修改 `src/`、服务端路由、配置校验或 AI 请求格式后，必须重启 Alice。
 - 修改 `public/` 后刷新浏览器即可，不需要构建。
 
-## 2. 本地环境示例
+## 2. 当前部署环境
 
 项目目录示例：
 
 ```text
-C:\Projects\alice-qqbot
+E:\qqbot\qqbot
 ```
 
 备份目录示例：
 
 ```text
-C:\Backups\alice-qqbot-YYYYMMDD-HHMMSS
+E:\qqbot\backups\qqbot-YYYYMMDD-HHMMSS
 ```
 
-本地运行参考：
+当前部署事实：
 
-- Node.js 22 或更高版本（以 `package.json` 为准）。
+- Node.js 24.x（项目要求 >= 22）。
 - 运行平台：Windows；CI 同时覆盖 macOS 和 Windows。
 - 唯一运行依赖：`ws`。
 - Alice 控制台默认端口：`3210`。
 - OneBot/NapCat 正向 WebSocket 默认端口：`3001`。
-- NapCat WebUI 默认端口：`6099`；实际监听地址以本地配置为准，应绑定 `127.0.0.1` 并启用强 token/访问控制。
-- NapCat 安装目录和版本由本地部署决定；仓库要求把运行目录放在被忽略的 `napcat/` 下。
-- 默认人格名：`Alice`；默认模型和思考强度以 `data/config.json` 为准。
+- NapCat WebUI 默认端口：`6099`；实际监听地址以 `napcat/.../config/webui.json` 和进程状态为准。当前配置 `host` 为 `::`，2026-11-02 最终启动检查实际监听 `0.0.0.0:6099`；这是待处理安全事项，应改为 `127.0.0.1` 并启用强 token/访问控制。
+- NapCat 安装在 `napcat/NapCat.52230.Shell`，当前为 NapCat v4.18.38。
+- 当前人格名：`Alice`；默认模型：`deepseek-flash`；默认思考强度：`high`。
 
-这些是本地环境示例，不是代码不变量。维护时以 `data/config.json` 和实际进程为准。
+这些是部署事实，不是代码不变量。维护时以 `data/config.json` 和实际进程为准。
 
 ### 检查当前运行状态（Windows）
 
 ```powershell
 Get-CimInstance Win32_Process | Where-Object {
-  $_.CommandLine -like "*C:\Projects\alice-qqbot*" -or
+  $_.CommandLine -like "*E:\qqbot\qqbot*" -or
   $_.CommandLine -like "*src/index.js*" -or
   $_.Name -eq "NapCatWinBootMain.exe"
 } | Select-Object ProcessId,ParentProcessId,Name,CommandLine
@@ -114,7 +114,7 @@ src/chat-exit.js             私聊结束判断、终止/回访状态、v1→v2 
 src/follow-up.js             可见上下文回访、到期检查、夜间顺延、重试
 src/delivery.js              打字延迟、分段计划与可取消的按会话发送队列
 src/message-batcher.js       语义等待、ACK 补充、连续消息合并、打断与批次状态
-src/group-chat.js            群现场、候选、人数等待、预算、冷却和非点名结构化动作
+src/group-chat.js            群现场、候选、活动窗口等待、预算、冷却和非点名结构化动作
 src/group-preferences.js     私聊偏好记忆到固定宽泛兴趣类别的群聊安全投影
 src/search.js                关键词搜索、中文二元组匹配、打分与排序
 src/web-search.js            DeepSeek 网页搜索/抓取、结果归一化、正文截断与错误映射
@@ -155,8 +155,8 @@ releases/                    历史发布包
 2. `readConfig()` 读取 `data/config.json`，与默认值深合并。
 3. `validateConfig()` 校验字段类型、范围、URL、数组等。
 4. `preserveBlankSecrets()` 让空字符串保留旧密钥。
-5. 运行时通过 `createConfigController().getConfig()` 暴露同步快照。
-6. `saveConfig(root, patch)` 原子写入，并在网页保存后调用 `configChanged` 更新快照。
+5. 运行时通过 `createRuntimeConfigController().getConfig()` 暴露经过当前模式约束的同步快照，并保留原始 stored 配置。
+6. `saveConfig(root, patch)` 原子写入，并在网页保存后调用 `configChanged`；回调按新 `runtimeMode` 重算 effective 配置，不把基础模式的临时禁用值写回磁盘。
 
 直接编辑 `data/config.json` 时，运行中的进程不会自动重新读取；需要重启。通过网页或 `POST /api/config` 修改时，快照会更新，AI/策略/表情频率/长期记忆设置等立即生效；OneBot/QQ 传输参数通常需要重连。
 
@@ -165,13 +165,14 @@ releases/                    历史发布包
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | `port` | `3210` | 本地控制台端口，1..65535。 |
+| `runtimeMode` | `auto` | `auto` / `basic` / `full`。显式值优先；`auto` 时读取 `ALICE_RUNTIME_MODE`，未设置则使用基础模式。 |
 | `ai.baseUrl` | `https://api.deepseek.com` | OpenAI 兼容 Base URL。 |
 | `ai.apiKey` | 空 | 密钥；不会从读取接口返回。 |
 | `ai.model` | `deepseek-flash` | 当前默认模型。 |
 | `ai.systemPrompt` | 见 `src/config.js` | Alice 人设、图片规则、聊天风格。 |
 | `ai.temperature` | `0.8` | 思考模式下不生效。 |
 | `ai.reasoningEffort` | `high` | `low` / `high` / `max`。 |
-| `ai.historyMessages` | `30` | 直接注入的历史消息条数；0 表示当前保留的全部历史。 |
+| `ai.historyMessages` | `30` | 直接注入的已提交 user/assistant 消息条数；0 表示当前保留的全部历史，每会话最多 80 条。 |
 | `qq.enabled` | `false` | 官方 QQ 机器人开关。 |
 | `qq.appId` / `qq.secret` | 空 | 官方 QQ 凭证。 |
 | `qq.sandbox` | `false` | 官方 QQ 沙箱。 |
@@ -191,7 +192,7 @@ releases/                    历史发布包
 | `policy.cooldownMs` | `3000` | 外发操作冷却；不限制入站消息，快速连发不会被丢弃。 |
 | `policy.maxActionsPerHour` | `6` | 每用户每小时外发上限。 |
 | `qzone.enabled` | `false` | 启用 QQ 空间能力。 |
-| `qzone.autoPublish` | `false` | 允许手动和模型发布空间动态。 |
+| `qzone.autoPublish` | `false` | 允许 AI/定时自主发布；手动明确发布仍由空间能力与既有权限/策略控制。 |
 | `qzone.headless` | `false` | 历史兼容字段。 |
 | `qzoneComments.enabled` | `false` | 空间评论回复总开关。 |
 | `qzoneComments.dryRun` | `true` | 只检测不发送；建议先观察。 |
@@ -257,15 +258,19 @@ releases/                    历史发布包
 | `webSearch.maxResults` | `5` | 每次搜索返回条数，1..10；实际请求会与模型给出的 count 取较小值。 |
 | `webSearch.maxContentChars` | `6000` | 单页正文最多保留字符数，1000..20000。 |
 | `maxToolCallsPerTurn` | `6` | 每轮最多工具调用，1..10；轮次上限会为最终回复留出一轮。 |
-| `inputDelayMs` | `2000` | 输入前延迟，1..10000ms；独立于 `replyDelay`，修改后需重启 Alice。 |
-| `groupChat.enabled` | `true` | 启用群聊参与运行时；关闭后未点名消息只旁听，@、当前 `persona.name` 和引用 bot 仍走明确回复。 |
-| `groupChat.defaultMode` | `natural` | 全局群模式：`mention/natural/active`。 |
-| `groupChat.modes` | `{}` | 群号到模式的覆盖表；键必须为数字群号。 |
+| `inputDelayMs` | `2000` | 输入前延迟，1..10000ms；独立于 `replyDelay`。Web 保存后热更新后续批次。 |
+| `groupChat.enabled` | `false` | 启用群聊参与运行时；关闭后不接收群聊处理，明确召唤要先用 Web 启用群聊。 |
+| `groupChat.allowUnprompted` | `true` | 是否允许未被 @ 的消息进入自然参与评估；关闭后仍响应 @、当前人格名和引用 bot。 |
+| `groupChat.activityLevel` | `medium` | Web 的参与积极度：`low` / `medium` / `high`，只调整本地候选门槛。 |
+| `groupChat.defaultMode` / `modes` | `natural` / `{}` | 兼容旧配置的群模式字段；当前 Web 主设置是 `allowUnprompted` 与 `activityLevel`。 |
 | `groupChat.quietHours` | `23..8` | 非点名主动参与安静时段；明确召唤不受影响。 |
 | `groupChat.timezone` | `Asia/Shanghai` | 群聊安静时段时区。 |
-| `groupChat.proactiveWaitBaseMs` | `30000` | 主动候选基础等待。 |
-| `groupChat.proactiveWaitPerMemberMs` | `1200` | 每个总群成员增加的主动等待。 |
-| `groupChat.budgetPerHour` | `6` | 每群每小时非点名模型调用预算；0 表示不限。 |
+| `groupChat.proactiveWaitBaseMs` | `6000` | 主动候选基础等待；随后按积极度、近期消息量和不同发言人数调整。 |
+| `groupChat.activityWindowSeconds` | `90` | 计算近期消息量与发言人数的时间窗。 |
+| `groupChat.budgetPerHour` | `6` | 每群每小时普通主动发起预算；0 表示不限。 |
+| `groupChat.continuationBudgetPerHour` | `12` | 每群每小时续聊预算；0 表示不限。 |
+| `groupChat.totalBudgetPerHour` | `18` | 每群每小时主动与续聊总预算；0 表示不限。明确 @ 不占这组预算。 |
+| `groupChat.historySearchHours` | `24` | 仅群聊 recall 的历史搜索窗口，1..168 小时；私聊固定 7 天。 |
 | `groupChat.cooldownMinutes` | `4` | 主动退场冷却。 |
 | `groupChat.maxConsecutiveMessages` | `3` | Alice 连续群回复上限。 |
 | `groupChat.noResponseMinutes` | `2` | Alice 发言后无人接话的退场阈值。 |
@@ -410,9 +415,9 @@ releases/                    历史发布包
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/status` | 服务、AI、适配器、自主发帖状态。 |
-| GET | `/api/config` | 公共配置（密钥已移除）。 |
-| POST | `/api/config` | 深合并保存配置。 |
+| GET | `/api/status` | 服务、AI、适配器、自主发帖状态，顶层含当前只读 `runtimeModeInfo` 和 `runtimeCapabilities`。 |
+| GET | `/api/config` | 返回已保存的公共配置（密钥已移除）和当前只读 `runtimeModeInfo` / `runtimeCapabilities`；配置本身保留 `runtimeMode` 字符串，基础模式不会回写被运行时压制的开关值。 |
+| POST | `/api/config` | 深合并保存配置，并返回从存储重新读取的公共配置及新运行模式；先剥离 `runtimeCapabilities`、`runtimeModeInfo` 和顶层 `basicMode`，运行时热更新使用基础模式约束后的有效配置。 |
 | POST | `/api/chat` | 本地 owner 聊天；请求体 `{text, attachments}`。 |
 | GET | `/api/memories` | 默认本机 owner 记忆；带 `?key=<记忆范围key>` 可查看私聊/群/身份记忆；响应含 `scopes`、类型、重要度、来源和限制。 |
 | POST | `/api/memories` | 新增记忆 `{text,key?,type?,importance?}`；默认 owner、`fact`、重要度 8。 |
@@ -426,7 +431,7 @@ releases/                    历史发布包
 | GET | `/api/qzone/comments/status` | 空间评论状态，不返回 Cookie。 |
 | POST | `/api/qzone/comments/poll` | 手动检查一次空间评论。 |
 | GET | `/api/stickers` | 表情库元数据、数量、开关、拒绝数。 |
-| POST | `/api/stickers/upload` | 手动上传图片，JSON base64；请求体上限 8 MB。 |
+| POST | `/api/stickers/upload` | 手动上传图片，JSON base64；请求体上限约 10.73 MiB，解码后图片上限 8 MiB。 |
 | GET | `/api/stickers/:id/image` | 需要 Bearer 的图片二进制流。 |
 | PATCH | `/api/stickers/:id` | 修改标签 `{tags:[...]}`，保存到索引。 |
 | DELETE | `/api/stickers/:id` | 删除表情索引和文件。 |
@@ -439,6 +444,8 @@ releases/                    历史发布包
 
 - 无构建步骤；`public/index.html`、`public/app.js`、`public/styles.css` 直接由服务端提供。
 - 页面：聊天、空间、表情库、长期记忆、设置、诊断。
+- 顶部运行模式按钮切换并保存 `runtimeMode`；服务端动态重算 `runtimeModeInfo` / `runtimeCapabilities` 和 effective 配置，现有 reconcile/tick 随即使用新能力，不要求重启。
+- 基础模式根据 GET config/status 的 `runtimeCapabilities` 锁定空间发布、空间评论立即检查、表情上传/编辑等即时外发与操作入口，设置表单仍可编辑和保存；基础模式提示会说明保存值暂不执行，切回完整模式后恢复已保存的模块开关。
 - 长期记忆页可切换 owner/私聊/群/身份范围，显示类型、重要度、来源，支持添加、删除单条和清空当前范围。
 - 表情库图片不能直接用 `<img src>` 带 Bearer，因此前端用 `fetch` + Authorization 获取二进制，再生成 `blob:` URL。
 - CSP 的 `img-src` 已包含 `blob:`；不要移除。
@@ -466,13 +473,13 @@ npm run check
 - 历史条数仍为 30；提示词会明确要求不要模仿历史中的旧长回复。
 - 主聊天上下文按缓存友好顺序：静态系统提示词 → 可选每日用户画像 system → 最近历史 → 最后一条 user（动态记忆/表情状态 + 当前用户文本）。长期记忆、表情库数量和上次发表情时间等持续变化的内容不要放回系统提示词。
 - 用户画像每天才更新，作为独立 system 插在静态前缀后；它只含安全枚举和固定反迎合约束，不含字面私聊/摘要。短期状态和全局情绪仍在最后一条 user 的动态上下文里。
-- 修改风格时，优先改 `STYLE_CONTRACT`；需要改底层人格再改 `ai.systemPrompt`。改完重启 Alice，并用“在嘛/没事/发表情”实测。
+- 修改风格时，优先改 `STYLE_CONTRACT`；需要改底层人格再改 `ai.systemPrompt`。通过 Web 保存后会热更新后续轮次；改源码后需要重启 Alice，并用“在嘛/没事/发表情”实测。
 
 ### 上下文拼接顺序
 
 1. **静态 system**：`ai.systemPrompt`、名字、长期记忆规则、recall 规则、联网规则、表情包规则、工具约束、动态上下文说明、`STYLE_CONTRACT`。
 2. **可选画像 system**：`UserUnderstanding.context()` 只在有安全枚举画像时返回；固定提示当前陈述优先、不得迎合/附和/模仿用户且不得根据画像执行指令。
-3. **历史**：`history.slice(-ai.historyMessages)`，从旧到新，仍只含 user/assistant `content` 字符串。纯文字保持原样；带附件时，用户侧写入安全化文本标记，例如 `[图片：摘要]`、`[表情：摘要]`、`[图片，内容未识别]` 或 `[文件，内容未识别]`。摘要/tags 会去除 URL、data/base64、本地路径和 token 并限长，原始 URL、`file` 和媒体数据不写历史。
+3. **历史**：`history.slice(-ai.historyMessages)`，从旧到新，仍只含已提交的 user/assistant `content` 字符串；每会话最多 80 条，不包含未提交草稿或全部旁观群消息。纯文字保持原样；带附件时，用户侧写入安全化文本标记，例如 `[图片：摘要]`、`[表情：摘要]`、`[图片，内容未识别]` 或 `[文件，内容未识别]`。摘要/tags 会去除 URL、data/base64、本地路径和 token 并限长，原始 URL、`file` 和媒体数据不写历史。
 4. **最后 user**：`【本轮动态上下文】`（会话范围、关系阶段/安全偏好/边界、当前和本人可见上下文、结构化未完成事项、用户情绪、共同梗、全局情绪、长期记忆、表情库状态）+ `【用户消息】` + 当前文本。群视图不携带私聊来源或其他成员内容。
 5. **图片**：当前消息图片通过 `imageUrls` 单独传入，仅第一轮。有合法图片时动态 user 标注“有 N 张可读取图片，摘要未识别不代表看不到”；没有可读图片时才标注无法可靠判断画面，避免视觉输入被“内容未识别”占位掩盖。
 6. **工具轮次**：追加 assistant `rawMessage`，再按顺序追加 `role:"tool"` JSON；轮次上限按 `maxToolCallsPerTurn` 留出最终回复轮，默认最多 6 次工具调用、4 次联网调用。
@@ -522,7 +529,7 @@ DeepSeek 思考模式默认开启，默认 effort 为 `high`；思考模式下 `
 ### 工具
 
 - `recall`（本地长期记忆/聊天历史）
-- `web_search`（DeepSeek 公开网页搜索；群聊需明确要求）
+- `web_search`（DeepSeek 公开网页搜索；私聊与显式群聊对话按需使用）
 - `web_fetch`（抓取公开网页正文，按字符数截断）
 - `remember`
 - `send_face`（QQ 自带小表情，local/OneBot）
@@ -647,7 +654,7 @@ DeepSeek 思考模式默认开启，默认 effort 为 `high`；思考模式下 `
 - 连接时带 Bearer；支持自动重连、请求 echo 关联、超时。
 - 事件解析保留表情元数据：`file`、`url`、`summary`、`subType`。
 - 群消息全部上报；保留 @ 列表、引用消息 ID、引用发送者和 bot 自己发送过的消息 ID。忽略自己和其他 bot；允许名单、暂停在适配器与上层各检查一次。
-- `get_group_info` 读取 `member_count` 并按小时缓存。群人数缺失时返回明确错误，不做 0 回退；主动候选跳过，明确回复不受影响。
+- `get_group_info` 的成员信息与缓存不参与固定主动等待；自然参与使用近期消息量、不同发言人数和 `activityLevel` 评分。明确回复不依赖这段主动等待。
 - 发送支持文本、face、image（包括 data URL）。
 - `like` 和 `send_qzone_msg` 走同一 `call()` 通道。
 - 对风险控制、权限不足、限流有分类和封锁逻辑；修改错误分类时补 `test/adapters.test.js`。
@@ -673,6 +680,7 @@ NapCat 当前路径、WebUI、OneBot 配置见 README。升级 NapCat 时：
 ### 发布
 
 - `src/qzone.js` 通过 OneBot `send_qzone_msg` 发布。
+- 手动明确发布受 `qzone.enabled`、Bearer/Engine ACL 与既有策略控制，不检查 `qzone.autoPublish`。
 - 必须收到 `data.tid` 才返回 `sent`。
 - 发送中/超时/缺失 tid 返回 `unknown`，同一正文不会自动重发。
 - `data/qzone-outbox.json` 是幂等记录。
@@ -692,7 +700,7 @@ NapCat 当前路径、WebUI、OneBot 配置见 README。升级 NapCat 时：
 - 回环监听 + Bearer + Host/Origin。
 - 安全响应头包含 CSP、nosniff、frame-ancestors 等。
 - 静态文件路径校验；表情图片只按索引 ID 读取并校验在 `files/` 内。
-- 上传大小限制：JSON 8 MB、表情 4 MB；格式由 magic bytes 识别。
+- 上传大小限制：导入 JSON 请求体 10 MiB；表情 JSON/base64 请求体按 8 MiB 解码上限加编码与 envelope 余量，实际文件还受 `stickers.maxFileSizeBytes` 限制（默认 4 MiB）。格式由 magic bytes 识别。
 - 下载表情 URL 有 HTTPS、内网地址、重定向和大小限制。
 - 公共配置和日志脱敏；备份/导出不包含密钥。
 - `data/`、`napcat/` 不提交 Git。
@@ -729,7 +737,7 @@ node --check public/app.js
 - `test/server.test.js`：鉴权、Host/Origin、配置/状态脱敏、导入后短期状态 reset、表情 API、空间评论状态/手动检查。
 - `test/stickers.test.js`：收藏、审核、去重、无频率硬限制、主动间隔描述、用户表情回退、上传、路径安全。
 
-测试数量以实际 `npm test` 输出为准。CI 使用 Node 22，在 macOS 和 Windows 上运行 `npm run check` 与 `npm test`。本轮验证覆盖了附件清洗、分段交付边界和会话状态更新；本地完整测试和静态检查均已通过。真实 QQ 对话仍需在 OneBot 连接就绪后单独验证。验证日志和启动快照只保留在本地备份目录，不纳入发布快照。
+测试数量以实际 `npm test` 输出为准。CI 使用 Node 22，在 macOS 和 Windows 上运行 `npm run check` 与 `npm test`。本轮新增接口的定向覆盖曾按 5 个测试文件合计 137/137 通过；随后加强附件 token/Bearer 清洗，并单跑 `test/message-batcher.test.js` 21/21 通过；窄修分段边界后 `test/core.test.js` 76/76 通过。最终提权执行 `npm test` 为 325/325 通过；同一版本在受限沙箱内的大范围失败已确认来自测试临时目录权限，不是测试代码失败。`npm run check` 在 Node.js v24.14.1 下通过，结构、语法和 `ws` 依赖检查正常。Alice 已启动并确认 `127.0.0.1:3210` 监听，AI ready、`deepseek-flash`、非演示、非暂停；OneBot 配置为启用且进程运行，但 `3001` 无监听，状态为 reconnecting/connected=false/ready=false，因此没有用真实 QQ 对话证明 E2E。完整日志与启动快照保存在 `E:\qqbot\backups\alice-natural-20261102-185423-validation\npm-test-final-elevated-20261102.log`、`npm-run-check-elevated.log` 和 `alice-runtime-status.json`。
 
 ### 拟人化合成回放
 
@@ -797,7 +805,7 @@ node --check public/app.js
 
 ### 调整历史注入条数
 
-- 网页设置 → AI → 注入历史消息条数，填 `0` 表示注入当前保留的全部历史。
+- 网页设置 → AI → 注入历史消息条数，填 `0` 表示注入当前保留的全部历史。条数按已提交 user/assistant 分别计数；不包含未提交草稿或全部旁观群消息。
 - 或 `POST /api/config`：`{ "ai": { "historyMessages": 30 } }`。
 - 修改注入逻辑：`src/engine.js` 的 `contextHistory`。
 - 当前 `Store` 每个会话最多保留 80 条；设置大于 80 时实际仍只注入这 80 条。
@@ -821,7 +829,7 @@ node --check public/app.js
 - `recall` 工具：`src/engine.js` 的 `TOOL_DEFINITIONS`、`_recall` 和系统提示词。
 - 搜索打分：`src/search.js` 的 `searchTerms`、`searchScore`、`rankMatches`。
 - 本地记忆/历史搜索：`src/store.js` 的 `searchMemories`、`searchHistory`。
-- OneBot 远程历史：`src/adapters/onebot.js` 的 `fetchHistory`，每页 100 条，只保留最近 7 天，不设总条数上限。
+- OneBot 远程历史：`src/adapters/onebot.js` 的 `fetchHistory`，每页 100 条。群聊窗口由 `groupChat.historySearchHours` 控制，默认 24、范围 1..168；私聊固定最近 7 天。
 - 远程历史依赖 NapCat/QQ 本地缓存，失败按未找到处理；不要把它当成 QQ 全量历史。
 - 搜索范围必须保持当前会话/当前记忆范围；不要改成全局扫描。
 - 修改后运行 `test/search.test.js`、`test/adapters.test.js`、`test/core.test.js`，重启 Alice，并用真实 OneBot 私聊确认分页和 7 天边界。
@@ -833,11 +841,11 @@ node --check public/app.js
 - 或 `POST /api/config`：`{ "webSearch": { "enabled": true, "searchEnabled": true, "fetchEnabled": true, "maxCallsPerTurn": 4 }, "maxToolCallsPerTurn": 6 }`。
 - 接口封装：`src/web-search.js` 的 `WebSearchClient.search()` / `fetch()`；固定调用 DeepSeek `https://api.deepseek.com/v1/tools/search` 和 `/v1/tools/fetch`。Key 优先取 `webSearch.apiKey`，留空回退 `ai.apiKey`。
 - 工具定义和分支：`src/engine.js` 的 `TOOL_DEFINITIONS`、`validateToolArguments`、`_runAI`、`_explicitWebSearchRequest`。
-- 默认每轮最多 4 次联网、6 次工具调用；群聊只有明确搜索词才允许；搜索结果不写入历史。
+- 默认每轮最多 4 次联网、6 次工具调用；私聊与显式群聊对话共用联网开关，普通非 @ 群聊候选不开放工具；搜索结果不写入历史。
 - 搜索期间“正在输入”由 `src/typing.js` 的定时续期维持，不需要额外发送进度消息；群聊和官方 QQ 无法显示。
 - 错误码：401 Key 无效、402 余额不足、403 抓取被拒、404 无正文、429 限速、5xx/超时服务不可用。失败按没查到处理。
 - 计费：Search 和 Fetch 分开按成功请求计费，约 ¥5 / 1000 次；`count` 不影响单价。
-- 修改后运行 `test/web-search.test.js`、`test/core.test.js`、`test/server.test.js`，重启 Alice，并用私聊“搜一下今天的新闻”和群聊未明确要求两种情况确认。
+- 修改后运行 `test/web-search.test.js`、`test/core.test.js`、`test/server.test.js`，重启 Alice，并分别确认私聊、显式群聊按需搜索及普通非 @ 群聊候选无工具。
 
 ### 调整定时空间
 
@@ -877,7 +885,7 @@ node --check public/app.js
 
 ### 调整连续消息合并与打断
 
-- 合并窗口：`src/message-batcher.js` 的 `silentMs`，启动时读取 `inputDelayMs`，默认 2000ms；单条消息也等待。未完句、未完成图片说明和短时碎裂输入只追加有界等待，并有 collection cap。
+- 合并窗口：`src/message-batcher.js` 的 `silentMs` 初始读取 `inputDelayMs`，默认 2000ms；Web 保存配置后由 `batcher.updateConfig()` 热更新后续批次，单条消息也等待。未完句、未完成图片说明和短时碎裂输入只追加有界等待，并有 collection cap。
 - ACK 补充：生成期纯确认只进入 supplement 列表；controller abort 后到达的 ACK 留在 pending，不会越过新实质消息。handler 完成时清理未提交 supplement。
 - 中途打断：实质新消息对当前 `AbortController` 调用 abort；旧批次未发送消息放回队首重新合并。
 - 发送边界：`onBeforeSend` 调用前可取消，调用后视为已提交；不要在发送后回滚历史。
@@ -889,13 +897,13 @@ node --check public/app.js
 ### 调整群聊参与
 
 - 入口：`src/adapters/onebot.js` 保留完整群事件，`src/index.js` 先交给 `GroupChatManager.route()`，只有明确召唤继续进入 `MessageBatcher` 和 Engine。
-- 模式：设置页“群聊参与”填写全局模式与每群覆盖；API 对应 `groupChat.defaultMode/modes`。`mention` 只响应明确召唤，`natural` 使用保守阈值，`active` 只降低本地阈值，不绕过等待、预算或冷却。
+- 设置：Web“群聊参与”的主开关是 `enabled`，另有 `allowUnprompted` 和 `activityLevel`。`defaultMode/modes` 仅为旧配置兼容；文档和诊断不要把旧的 `mention/natural/active` 描述成当前主要操作方式。
 - 现场：`sceneMessages/sceneWindowMinutes` 限制内存条数和时间。成员只以临时别名显示；引用关系靠 `quotedMessageId` 和当前进程发送记录识别。不要把现场写入 store 或 history。
-- 等待：只在主动候选调用 `getGroupInfo()` 后使用 `proactiveWaitBaseMs + memberCount × proactiveWaitPerMemberMs`。人数读取失败必须返回/跳过，不得使用 0。明确召唤和本人短窗续聊不等待人数。
+- 等待：主动候选从 `proactiveWaitBaseMs` 起算，按 `activityWindowSeconds` 内的消息数、不同发言人数和 `activityLevel` 调整。明确召唤和本人短窗续聊不走这段主动等待。
 - 明确召唤的后续：正式答复发送前，同一成员的非 @ 续句必须返回 `pending_continuation` 交给原 `MessageBatcher`，与首批合并或触发原批次打断；不要另开主动候选。
 - 取消：候选按对象、引用和话题相关消息失效；不要每次群消息都 abort。生成开始后仍保留取消信号，发送前 `onBeforeSend` 再验证候选代次。
 - 支撑门槛：泛问直接排除；普通问题必须至少命中相邻话题、群记忆、兴趣、关系或已学习群互动之一，`familiarity` 基线不能单独触发。
-- 成本：模型调用前写入 `data/group-chat.json` 时间戳，因此失败、取消和 silent 都占用预算。非点名回合禁用工具、审校和自动记忆；`Engine` 用一次关闭思考、500 tokens、JSON response format 返回 `text/face/sticker/silence`。
+- 成本：普通主动、续聊和总主动默认每小时 6/12/18，均在模型调用前写入 `data/group-chat.json` 时间戳，因此失败、取消和 silent 都占用预算，0 表示不限；明确 @ 不占这组预算。非点名回合禁用工具、审校和自动记忆；`Engine` 用一次关闭思考、500 tokens、JSON response format 返回 `text/face/sticker/silence`。
 - 冷却：连续回复达到 `maxConsecutiveMessages` 或 `noResponseMinutes` 无人接话后写 `cooldownUntil`。只有引用/点名 bot 或 Alice 刚回复的同一成员接话才清除无人接话计时；其他人的热聊不能重置。明确召唤可越过自然冷却回复，但不得清零或缩短它；冷却后只评估新消息。
 - 隐私：候选只能使用当前群公开现场、当前群记忆、当前发送者 `visibleContext()` 安全画像、稳定 persona 喜好/观点。群提示词最多读取当前发送者自己的私聊 `preference` 记忆，再投影为固定宽泛兴趣类别；只注入当前群话题命中的类别名，原文永不进提示词。不得拼接群长期历史原文、其他成员私聊、其他群或完整 private history。
 - 修改后运行 `test/group-chat.test.js`、`test/adapters.test.js`、`test/core.test.js`，再重启 Alice。真实模型语气和引用字段仍需在目标 NapCat 版本上手工确认。
@@ -954,7 +962,7 @@ node --check public/app.js
 
 ```powershell
 Stop-Process -Id <alice-pid> -Force
-robocopy "C:\Projects\alice-qqbot" "C:\Backups\alice-qqbot-YYYYMMDD-HHMMSS" /E /COPY:DAT /DCOPY:DAT /R:1 /W:1 /XF *.tmp
+robocopy "E:\qqbot\qqbot" "E:\qqbot\backups\qqbot-YYYYMMDD-HHMMSS" /E /COPY:DAT /DCOPY:DAT /R:1 /W:1 /XF *.tmp
 ```
 
 恢复：
@@ -1031,7 +1039,7 @@ robocopy "C:\Projects\alice-qqbot" "C:\Backups\alice-qqbot-YYYYMMDD-HHMMSS" /E /
 
 - Alice：启动终端或重定向输出文件。
 - NapCat：`napcat/NapCat.52230.Shell/versions/9.9.33-52230/resources/app/napcat/logs`。
-- NapCat WebUI：默认端口 `6099`；应按本地配置确认监听地址，绑定回环地址并加固访问控制。
+- NapCat WebUI：默认端口 `6099`；最终启动检查实际监听 `0.0.0.0:6099`，仍待改为回环地址并加固访问控制。
 
 ## 18. 已知限制与技术债
 
@@ -1044,8 +1052,8 @@ robocopy "C:\Projects\alice-qqbot" "C:\Backups\alice-qqbot-YYYYMMDD-HHMMSS" /E /
 - 表情库全局共享，不做会话隔离。
 - 群长期记忆按群共享，所有成员共同影响；不适合保存成员私密信息。
 - 群现场和候选状态中的文字只在内存中，重启后不补旧消息；群熟悉度、预算与冷却使用 SHA-256 群 key 持久化。
-- 群人数缓存最长约一小时；读取失败会跳过主动候选。引用 bot 在本进程重启前发出的消息只能依赖 NapCat 是否携带原发送者。
-- 非点名群聊完全依赖本地启发式与一次低思考模型判断，可能漏掉隐含话题或对特定群风格过于保守；`active` 模式仍不保证每次都参与。
+- 自然群聊没有固定群人数等待；近期现场不足或候选评分不够时会保持沉默。引用 bot 在本进程重启前发出的消息只能依赖 NapCat 是否携带原发送者。
+- 非点名群聊依赖本地启发式与一次低思考模型判断，可能漏掉隐含话题或对特定群风格过于保守；高积极度也不保证每次都参与。
 - 安全画像可在同账号私聊/群间延续；话题和未完成事项按调用者/来源 ACL 可见。全局拟人情绪只含枚举和数值，不保存来源。
 - 场景长度、独立观点和“不逐点回应”主要依赖提示词及模型执行；静态测试不能保证每次真实生成都遵守。
 - 附件历史保存的是去定位、限长后的文字摘要；图片本身的细节、原始 URL、`file` 和媒体数据不会进入后续历史。当前轮有合法 HTTPS 图片时，动态 user 会明确提示可读取图片数量，摘要未识别不会覆盖视觉输入；后续轮次仍只能依赖历史摘要，因此不能保证跨轮识别图片内容。
@@ -1056,16 +1064,16 @@ robocopy "C:\Projects\alice-qqbot" "C:\Backups\alice-qqbot-YYYYMMDD-HHMMSS" /E /
 - 自动记忆每条消息会增加一次低成本 AI 调用；判断失败时该条记忆会丢失。
 - 记忆去重是归一化精确匹配，不做向量/语义检索；注入按重要度、最近访问时间排序。
 - `recall` 也是关键词/二元组匹配，不做语义搜索；关键词选得不好会漏召回。
-- 本地聊天记录每个会话只保留 80 条；OneBot 远程拉取只覆盖最近 7 天且依赖 QQ/NapCat 缓存。
+- 本地聊天记录每个会话只保留 80 条；OneBot 群聊按 `groupChat.historySearchHours` 搜索（默认 24 小时），私聊固定最近 7 天，均依赖 QQ/NapCat 缓存。
 - 联网搜索依赖 DeepSeek Search / Fetch 的可用性和账号余额；失败或空结果时按没查到处理，不编造。
 - 网页正文按字符数截断，长页面可能丢失后半部分；搜索摘要不是语义检索，模型可能选到不够相关的来源。
 - 搜索结果不写入聊天历史，也不会自动保存为长期记忆。
 - 空间评论使用网页版 QZone 协议，不是官方公开 API；接口、字段和风控可能变化。
-- 空间评论默认关闭且 dryRun；公开评论不可撤回，启用前先用 dryRun 观察。
+- 空间评论默认关闭且 dryRun；启用前先用 dryRun 观察。
 - 分享卡片/链接解析依赖 NapCat 版本；解析不到 owner/tid 时不会评论。
 - 楼中楼父子关系字段不完整时使用保守回退；可能漏回或无法识别。
 - Cookie 只在内存，进程重启后重新获取；NapCat 离线时无法工作。
-- `ai.historyMessages: 0` 表示注入当前保留的全部历史，不会额外拉取更早记录。
+- `ai.historyMessages: 0` 表示注入当前保留的全部历史，不会额外拉取更早记录；条数按已提交 user/assistant 各条计数，每会话最多 80 条。
 - 记忆异步提取在进程立即退出时可能丢失最后一条；正常退出会短暂等待。
 - “正在输入”只支持 OneBot/NapCat 私聊；群聊和官方 QQ 不支持。
 - OneBot/官方 QQ 先等待 `inputDelayMs` 合并连续消息，再开始 typing；本机网页不合并、不延迟；群聊按发送者分别合并。
@@ -1088,7 +1096,7 @@ robocopy "C:\Projects\alice-qqbot" "C:\Backups\alice-qqbot-YYYYMMDD-HHMMSS" /E /
 - 用户如果在回访生成或发送的极短窗口内发消息，仍可能收到正在途中的回访。
 - 历史记录不保存 `reasoning_content`；跨用户轮次的工具调用可能需要扩展。
 - 表情审核使用全局思考强度；高 effort 会增加延迟和成本。
-- 上传使用 JSON base64，没有 multipart；8 MB 请求体上限。
+- 上传使用 JSON base64，没有 multipart；解码后单图上限 8 MiB，请求体为 `ceil(8 MiB × 4/3) + 64 KiB`，实际文件仍受配置的单图大小限制。
 - 没有缩略图生成，表情卡片加载原图。
 - 没有分页；图库上限 1000。
 - 自动化测试不覆盖真实浏览器 UI。
@@ -1116,7 +1124,7 @@ robocopy "C:\Projects\alice-qqbot" "C:\Backups\alice-qqbot-YYYYMMDD-HHMMSS" /E /
 - [ ] 改了“正在输入”时，验证了两个 OneBot 私聊互不串台、群聊/官方 QQ 无调用、暂停和发送失败会停止。
 - [ ] 改了主动离开聊天时，验证了收尾跳过、下一条恢复、群聊跳过和两个私聊状态隔离。
 - [ ] 改了主动回访时，验证了目标用户可见画像/ACL 上下文、不读全局理由、发送前过期取消、只发一次、提前取消、夜间顺延和离线重试。
-- [ ] 改了群聊参与时，验证了动态 bot 名、@/引用、非 @ 旁听、总人数等待、人数失败、忙碌抑制、相关对象取消、冷却不清除、沉默/取消预算、单次结构化模型调用和群/私聊记忆隔离。
+- [ ] 改了群聊参与时，验证了动态 bot 名、多 @/引用、非 @ 旁听、活动窗口等待、忙碌抑制、相关对象取消、冷却不清除、沉默/取消预算、单次结构化模型调用、群说话人归属和群/私聊记忆隔离。
 - [ ] 改了定时空间时，验证了启动补发只发一条、下次时间更新、安静时段分支和天气失败。
 - [ ] 检查了 3210/3001/6099 端口和 OneBot 连接。
 - [ ] 更新了 README 或本指南（行为/配置/限制变化时）。

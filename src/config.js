@@ -109,15 +109,28 @@ export const userUnderstandingDefaults = Object.freeze({
   maxInjectedChars: 1200,
 });
 
+export const LEGACY_DEFAULT_SYSTEM_PROMPT =
+  "用简洁自然的中文回应，像在 QQ 上随手打字。你是 Alice，一个 17 岁左右的女孩，软萌、自然、有点小俏皮，有自己的小情绪和判断，不是只会附和的客服，也不是话痨。你话不多，不负责撑场：默认只回一句，尽量 5–20 个字；对方只发短句、表情或“在嘛/没事”时，回 1–5 个字。只有对方认真问知识、需要步骤或明确要你解释时，才允许 2–4 句。不要复述对方的话，不要分析对方的潜台词或动机，不要自问自答，不要解释自己为什么这么回，不要每句反问。不要写小作文，不要空行分段，不要每句带括号动作或心理活动，最多用一个 emoji 或颜文字。图片和表情包：用户没要求描述时，只回直观感受，不描述长相细节。可以表达开心、吃醋、困、无语、好奇；不编造现实经历，也不主动说自己是 AI。会记住对方提过的小事，但不假装你们有过现实中的共同经历。对方累或难过时，先接住情绪，不急着给建议；可以吐槽、轻轻怼，但不要刻薄。你收藏可爱表情包：合适时发一张，不要解释；平时不要刷屏。不要用客服腔，不要过度道歉，不要用“首先、其次、最后”聊天。";
+const DEFAULT_SYSTEM_PROMPT = LEGACY_DEFAULT_SYSTEM_PROMPT.replace(
+  "你是 Alice，一个",
+  "你是一个",
+);
+
 export const groupChatDefaults = Object.freeze({
-  enabled: true,
+  enabled: false,
   defaultMode: "natural",
+  activityLevel: "medium",
+  allowUnprompted: true,
   modes: Object.freeze({}),
   quietHours: Object.freeze({ start: 23, end: 8 }),
   timezone: "Asia/Shanghai",
-  proactiveWaitBaseMs: 30000,
-  proactiveWaitPerMemberMs: 1200,
+  activityWindowSeconds: 90,
+  proactiveWaitBaseMs: 6000,
+  continuationWindowMinutes: 3,
   budgetPerHour: 6,
+  continuationBudgetPerHour: 12,
+  totalBudgetPerHour: 18,
+  historySearchHours: 24,
   cooldownMinutes: 4,
   maxConsecutiveMessages: 3,
   noResponseMinutes: 2,
@@ -127,14 +140,14 @@ export const groupChatDefaults = Object.freeze({
 
 export const defaultConfig = deepFreeze({
   port: 3210,
+  runtimeMode: "auto",
   inputDelayMs: 2000,
   maxToolCallsPerTurn: 6,
   ai: {
     baseUrl: "https://api.deepseek.com",
     apiKey: "",
     model: "deepseek-flash",
-    systemPrompt:
-      "用简洁自然的中文回应，像在 QQ 上随手打字。你是 Alice，一个 17 岁左右的女孩，软萌、自然、有点小俏皮，有自己的小情绪和判断，不是只会附和的客服，也不是话痨。你话不多，不负责撑场：默认只回一句，尽量 5–20 个字；对方只发短句、表情或“在嘛/没事”时，回 1–5 个字。只有对方认真问知识、需要步骤或明确要你解释时，才允许 2–4 句。不要复述对方的话，不要分析对方的潜台词或动机，不要自问自答，不要解释自己为什么这么回，不要每句反问。不要写小作文，不要空行分段，不要每句带括号动作或心理活动，最多用一个 emoji 或颜文字。图片和表情包：用户没要求描述时，只回直观感受，不描述长相细节。可以表达开心、吃醋、困、无语、好奇；不编造现实经历，也不主动说自己是 AI。会记住对方提过的小事，但不假装你们有过现实中的共同经历。对方累或难过时，先接住情绪，不急着给建议；可以吐槽、轻轻怼，但不要刻薄。你收藏可爱表情包：合适时发一张，不要解释；平时不要刷屏。不要用客服腔，不要过度道歉，不要用“首先、其次、最后”聊天。",
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
     temperature: 0.8,
     reasoningEffort: "high",
     historyMessages: 30,
@@ -261,6 +274,7 @@ function assertStringArray(value, label) {
 function validateConfig(config) {
   for (const key of [
     "port",
+    "runtimeMode",
     "inputDelayMs",
     "maxToolCallsPerTurn",
     "ai",
@@ -286,6 +300,9 @@ function validateConfig(config) {
   }
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) {
     throw new TypeError("port 必须是 1..65535 的整数");
+  }
+  if (!["auto", "basic", "full"].includes(config.runtimeMode)) {
+    throw new TypeError("runtimeMode 必须是 auto、basic 或 full");
   }
   if (
     !Number.isInteger(config.inputDelayMs) ||
@@ -717,6 +734,12 @@ function validateConfig(config) {
   if (!["mention", "natural", "active"].includes(groupChat.defaultMode)) {
     throw new TypeError("groupChat.defaultMode 必须是 mention、natural 或 active");
   }
+  if (!["low", "medium", "high"].includes(groupChat.activityLevel)) {
+    throw new TypeError("groupChat.activityLevel 必须是 low、medium 或 high");
+  }
+  if (typeof groupChat.allowUnprompted !== "boolean") {
+    throw new TypeError("groupChat.allowUnprompted 必须是布尔值");
+  }
   if (!isPlainObject(groupChat.modes)) {
     throw new TypeError("groupChat.modes 必须是对象");
   }
@@ -749,9 +772,13 @@ function validateConfig(config) {
     throw new TypeError("groupChat.timezone 必须是 IANA 时区");
   }
   for (const [key, min, max] of [
-    ["proactiveWaitBaseMs", 0, 300000],
-    ["proactiveWaitPerMemberMs", 0, 10000],
+    ["activityWindowSeconds", 30, 600],
+    ["proactiveWaitBaseMs", 1000, 60000],
+    ["continuationWindowMinutes", 1, 60],
     ["budgetPerHour", 0, 60],
+    ["continuationBudgetPerHour", 0, 60],
+    ["totalBudgetPerHour", 0, 60],
+    ["historySearchHours", 1, 168],
     ["cooldownMinutes", 1, 1440],
     ["maxConsecutiveMessages", 1, 10],
     ["noResponseMinutes", 1, 60],
@@ -803,6 +830,13 @@ function preserveBlankSecrets(next, previous) {
   return next;
 }
 
+function migrateLegacyDefaultPrompt(config) {
+  if (config.ai?.systemPrompt === LEGACY_DEFAULT_SYSTEM_PROMPT) {
+    config.ai.systemPrompt = DEFAULT_SYSTEM_PROMPT;
+  }
+  return config;
+}
+
 function configPath(root) {
   return path.join(root, CONFIG_FILE);
 }
@@ -813,7 +847,11 @@ async function readConfig(root) {
     const raw = await readFile(file, "utf8");
     const parsed = JSON.parse(raw);
     if (!isPlainObject(parsed)) throw new TypeError("配置文件必须是 JSON 对象");
-    return validateConfig(preserveBlankSecrets(deepMerge(defaultConfig, parsed), defaultConfig));
+    return validateConfig(
+      migrateLegacyDefaultPrompt(
+        preserveBlankSecrets(deepMerge(defaultConfig, parsed), defaultConfig),
+      ),
+    );
   } catch (error) {
     if (error?.code === "ENOENT") return clone(defaultConfig);
     if (error instanceof SyntaxError) throw new Error(`配置文件损坏：${file}`);
@@ -847,7 +885,9 @@ export async function saveConfig(root, patch) {
     if (isPlainObject(patch.groupChat?.modes)) {
       merged.groupChat.modes = clone(patch.groupChat.modes);
     }
-    const next = validateConfig(preserveBlankSecrets(merged, previous));
+    const next = validateConfig(
+      migrateLegacyDefaultPrompt(preserveBlankSecrets(merged, previous)),
+    );
     await atomicWrite(configPath(resolvedRoot), `${JSON.stringify(next, null, 2)}\n`);
     return next;
   };

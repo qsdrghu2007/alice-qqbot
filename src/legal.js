@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-Alice-Source-Available
 // See LICENSE and LICENSES/ALICE-SOURCE-AVAILABLE.md.
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { version: PROJECT_VERSION } = require("../package.json");
+
 const DEFAULT_SOURCE_URL = "https://github.com/qsdrghu2007/alice-qqbot";
 const SOURCE_URL_ENV = "ALICE_SOURCE_URL";
-const PROJECT_VERSION = "0.4.0";
 const COPYRIGHT_NOTICE = "Copyright (c) 2026 Alice QQ Bot contributors";
 
 const LICENSE_NOTICE = [

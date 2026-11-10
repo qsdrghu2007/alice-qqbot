@@ -6,7 +6,6 @@ import path from "node:path";
 
 import { groupChatDefaults } from "./config.js";
 import { conversationStateKey } from "./conversation-state.js";
-import { projectGroupSafePreferenceCategories } from "./group-preferences.js";
 import { rankMatches, searchScore, searchTerms } from "./search.js";
 
 const VERSION = 1;
@@ -61,12 +60,27 @@ function defaultGroupState() {
     cooldownUntil: 0,
     consecutiveMessages: 0,
     modelCalls: [],
+    proactiveCalls: [],
+    continuationCalls: [],
     updatedAt: 0,
   };
 }
 
 function normalizeGroupState(raw, now) {
   const source = isPlainObject(raw) ? raw : {};
+  const recentCalls = Array.isArray(source.modelCalls)
+    ? source.modelCalls
+        .map(Number)
+        .filter((value) => Number.isFinite(value) && value > now - 60 * 60 * 1000)
+        .slice(-100)
+    : [];
+  const normalizeCalls = (value) =>
+    Array.isArray(value)
+      ? value
+          .map(Number)
+          .filter((item) => Number.isFinite(item) && item > now - 60 * 60 * 1000)
+          .slice(-100)
+      : recentCalls;
   return {
     familiarity: Math.max(0, Math.min(1, Number(source.familiarity) || 0.25)),
     lastFamiliarityDay:
@@ -78,12 +92,9 @@ function normalizeGroupState(raw, now) {
       0,
       Math.min(10, Math.floor(Number(source.consecutiveMessages) || 0)),
     ),
-    modelCalls: Array.isArray(source.modelCalls)
-      ? source.modelCalls
-          .map(Number)
-          .filter((value) => Number.isFinite(value) && value > now - 60 * 60 * 1000)
-          .slice(-100)
-      : [],
+    modelCalls: recentCalls,
+    proactiveCalls: normalizeCalls(source.proactiveCalls),
+    continuationCalls: normalizeCalls(source.continuationCalls),
     updatedAt: nonNegative(source.updatedAt),
   };
 }
@@ -116,13 +127,23 @@ export function inQuietHours(quietHours, timezone, now) {
   return start < end ? hour >= start && hour < end : hour >= start || hour < end;
 }
 
-export function proactiveWaitMs(config, memberCount) {
+export function activityWaitMs(config, activity = {}) {
   const settings = { ...groupChatDefaults, ...(config?.groupChat ?? {}) };
-  const count = Number(memberCount);
-  if (!Number.isInteger(count) || count < 1) return null;
-  return (
-    nonNegative(settings.proactiveWaitBaseMs, 30000) +
-    count * nonNegative(settings.proactiveWaitPerMemberMs, 1200)
+  const speakers = Math.max(1, Math.floor(Number(activity.speakers) || 1));
+  const messages = Math.max(1, Math.floor(Number(activity.messages) || 1));
+  const levelFactor = { low: 1.35, medium: 1, high: 0.8 }[
+    settings.activityLevel
+  ] ?? 1;
+  const crowdFactor = Math.max(0.45, 1 - (speakers - 1) * 0.15);
+  const burstFactor = Math.max(0.55, 1 - (messages - 1) * 0.08);
+  return Math.max(
+    1000,
+    Math.round(
+      nonNegative(settings.proactiveWaitBaseMs, 6000) *
+        levelFactor *
+        crowdFactor *
+        burstFactor,
+    ),
   );
 }
 
@@ -152,6 +173,13 @@ function mergeGroupConfig(config) {
     quietHours: { ...groupChatDefaults.quietHours, ...(group.quietHours ?? {}) },
     modes: { ...(group.modes ?? {}) },
   };
+}
+
+function topicRelated(left, right) {
+  const terms = searchTerms(cleanText(left, 500)).filter(
+    (term) => Array.from(term).length >= 2,
+  );
+  return terms.length > 0 && searchScore(cleanText(right, 500), terms) > 0;
 }
 
 export class GroupChatManager {
@@ -188,6 +216,7 @@ export class GroupChatManager {
     this._threads = new Map();
     this._responseTimers = new Map();
     this._evaluations = new Map();
+    this._supersededEvaluations = new Set();
     this._writeQueue = Promise.resolve();
     this._initialized = null;
   }
@@ -293,19 +322,41 @@ export class GroupChatManager {
       : null;
   }
 
+  _threadRelation(event, thread, continuationMs) {
+    if (!thread || this.now() - thread.lastAliceAt > continuationMs) {
+      return "expired";
+    }
+    if (event.userId === thread.anchorUserId) return "continuation";
+    if (
+      event.quotedSelf === true ||
+      (thread.anchorMessageId && event.quotedMessageId === thread.anchorMessageId)
+    ) {
+      return "joining";
+    }
+    const topicText = thread.topicText || thread.anchorText || "";
+    return topicRelated(topicText, event.text) ? "joining" : "parallel";
+  }
+
   async route(event, { deliver = this.deliver } = {}) {
     if (!event || event.scope !== "group" || event.channel !== "onebot") {
       return { explicit: false, observed: false };
     }
     const config = this.getConfig();
     const settings = mergeGroupConfig(config);
+    if (settings.enabled !== true) {
+      return { explicit: false, observed: false, reason: "disabled" };
+    }
     const reason = this.explicitReason(event, config);
+    const continuationMs = settings.continuationWindowMinutes * 60 * 1000;
     const previousThread = this._threads.get(event.groupId);
+    const relation = this._threadRelation(event, previousThread, continuationMs);
     const continuesThread =
       previousThread?.awaitingReply === true &&
-      previousThread.anchorUserId === event.userId &&
-      this.now() - previousThread.lastAliceAt <= 3 * 60 * 1000;
-    if (continuesThread) event.groupContinuation = true;
+      ["continuation", "joining"].includes(relation);
+    if (continuesThread) {
+      event.groupContinuation = true;
+      event.groupThread = relation;
+    }
     this._recordScene(event, config);
     if (
       reason ||
@@ -313,6 +364,37 @@ export class GroupChatManager {
       continuesThread
     ) {
       this._clearResponseTimer(event.groupId);
+    }
+
+    if (reason) {
+      event.mentionedSelf = true;
+      this._clearEvaluation(event.groupId);
+      event.groupScene = this._decisionScene(event.groupId);
+      this._threads.set(event.groupId, {
+        anchorUserId: event.userId,
+        anchorMessageId: event.id,
+        topicText: cleanText(event.text, 500),
+        lastAliceAt: this.now(),
+        awaitingReply: false,
+        explicitPending: true,
+        divertedAt: 0,
+      });
+      return { explicit: true, reason, observed: false };
+    }
+
+    if (continuesThread && this._evaluations.has(event.groupId)) {
+      const pending = this._evaluations.get(event.groupId);
+      this._supersededEvaluations.add(event.groupId);
+      this._clearEvaluation(event.groupId);
+      if (pending) await pending;
+      this._supersededEvaluations.delete(event.groupId);
+      if (this._evaluations.get(event.groupId) === pending) {
+        this._evaluations.delete(event.groupId);
+      }
+      if (settings.allowUnprompted === true) {
+        this._scheduleEvaluation({ event, config, deliver });
+      }
+      return { explicit: false, observed: true };
     }
 
     const candidate = this._candidates.get(event.groupId);
@@ -323,29 +405,17 @@ export class GroupChatManager {
         this._candidates.delete(event.groupId);
       }
     }
-
-    if (reason) {
-      event.mentionedSelf = true;
-      this._clearEvaluation(event.groupId);
-      this._threads.set(event.groupId, {
-        anchorUserId: event.userId,
-        lastAliceAt: this.now(),
-        awaitingReply: false,
-        explicitPending: true,
-        divertedAt: 0,
-      });
-      return { explicit: true, reason, observed: false };
-    }
     const pendingThread = this._threads.get(event.groupId);
     if (
       pendingThread?.explicitPending === true &&
       pendingThread.anchorUserId === event.userId &&
-      this.now() - pendingThread.lastAliceAt <= 3 * 60 * 1000
+      this.now() - pendingThread.lastAliceAt <= continuationMs
     ) {
       this._clearEvaluation(event.groupId);
+      event.groupScene = this._decisionScene(event.groupId);
       return { explicit: true, reason: "pending_continuation", observed: false };
     }
-    if (settings.enabled !== false && this._mode(event.groupId, config) !== "mention") {
+    if (settings.allowUnprompted === true) {
       this._scheduleEvaluation({ event, config, deliver });
     }
     return { explicit: false, observed: true };
@@ -354,7 +424,8 @@ export class GroupChatManager {
   _scheduleEvaluation({ event, config, deliver }) {
     const settings = mergeGroupConfig(config);
     if (
-      settings.enabled === false ||
+      settings.enabled !== true ||
+      settings.allowUnprompted !== true ||
       config.demo === true ||
       !config.ai?.apiKey ||
       (event.mentionIds ?? []).length > 0 ||
@@ -392,57 +463,37 @@ export class GroupChatManager {
     const key = groupStateKey(event.groupId);
     const state = this._state(key);
     const now = this.now();
-    if (state.cooldownUntil > now) return;
-    if (state.cooldownUntil > 0) {
-      state.cooldownUntil = 0;
-      state.consecutiveMessages = 0;
-    }
-    if (!this._budgetAvailable(state, settings, now)) return;
-    if (typeof deliver !== "function") return;
-
     const thread = this._threads.get(event.groupId);
+    const continuationMs = settings.continuationWindowMinutes * 60 * 1000;
+    const relation = this._threadRelation(event, thread, continuationMs);
     let kind = "proactive";
-    if (
-      event.groupContinuation === true &&
-      thread?.anchorUserId === event.userId &&
-      now - thread.lastAliceAt <= 3 * 60 * 1000
-    ) {
+    if (event.groupContinuation === true && ["continuation", "joining"].includes(relation)) {
       kind = "continuation";
     }
     if (
-      thread?.divertedAt > 0 &&
-      now - thread.divertedAt <= 3 * 60 * 1000
-    ) {
-      return;
-    }
-    if (
       thread?.explicitPending === true &&
-      now - thread.lastAliceAt <= 3 * 60 * 1000
+      now - thread.lastAliceAt <= continuationMs
     ) {
       if (event.userId !== thread.anchorUserId) return;
       kind = "continuation";
     }
-    if (
-      thread &&
-      thread.anchorUserId === event.userId &&
-      now - thread.lastAliceAt <= 3 * 60 * 1000 &&
-      thread.awaitingReply === true
-    ) {
-      kind = "continuation";
+    if (kind === "continuation" && thread?.awaitingReply === true) {
       thread.awaitingReply = false;
-    } else if (
-      thread &&
-      thread.awaitingReply === true &&
-      event.userId !== thread.anchorUserId
-    ) {
-      thread.awaitingReply = false;
-      thread.divertedAt = now;
-      return;
     }
+    if (kind === "proactive") {
+      if (state.cooldownUntil > now) return;
+      if (state.cooldownUntil > 0) {
+        state.cooldownUntil = 0;
+        state.consecutiveMessages = 0;
+      }
+    }
+    if (!this._budgetAvailable(state, settings, now, kind)) return;
+    if (typeof deliver !== "function") return;
 
     let score = null;
     if (kind === "proactive") {
       score = await this._scoreCandidate(event, config, settings, state);
+      if (this._supersededEvaluations.has(event.groupId)) return;
       if (!score.shouldOffer) return;
     }
 
@@ -463,15 +514,8 @@ export class GroupChatManager {
 
     try {
       if (kind === "proactive") {
-        let memberCount;
-        try {
-          memberCount = await this.adapter.getGroupInfo(event.groupId);
-        } catch (error) {
-          this._warn("获取群人数失败，跳过本次主动候选", error);
-          return;
-        }
-        const waitMs = proactiveWaitMs(config, memberCount);
-        if (waitMs === null) return;
+        const activity = this._activityMetrics(event.groupId, settings);
+        const waitMs = activityWaitMs(config, activity);
         await delay(waitMs, controller.signal, this.timerApi);
         if (controller.signal.aborted) return;
         const refreshed = await this._scoreCandidate(
@@ -481,22 +525,23 @@ export class GroupChatManager {
           state,
           candidate.followups,
         );
+        if (this._supersededEvaluations.has(event.groupId)) return;
         if (!refreshed.shouldOffer) return;
         score = refreshed;
       }
 
+      if (this._supersededEvaluations.has(event.groupId)) return;
       if (
         config.policy?.paused ||
-        state.cooldownUntil > this.now() ||
-        !this._budgetAvailable(state, settings, this.now())
+        mergeGroupConfig(this.getConfig()).enabled !== true ||
+        mergeGroupConfig(this.getConfig()).allowUnprompted !== true ||
+        (kind === "proactive" && state.cooldownUntil > this.now()) ||
+        !this._budgetAvailable(state, settings, this.now(), kind)
       ) {
         return;
       }
       candidate.status = "generating";
-      state.modelCalls = [
-        ...state.modelCalls.filter((time) => time > this.now() - 60 * 60 * 1000),
-        this.now(),
-      ];
+      this._recordBudgetCall(state, kind, this.now());
       state.updatedAt = this.now();
       await this._persist();
       if (controller.signal.aborted) return;
@@ -507,6 +552,7 @@ export class GroupChatManager {
         text: cleanText(event.text, 500),
         groupDecision: {
           kind,
+          participation: kind === "continuation" ? "continuous" : "joining",
           score: score?.score ?? null,
           familiarity: state.familiarity,
           mode: this._mode(event.groupId, config),
@@ -517,9 +563,11 @@ export class GroupChatManager {
       const outcome = await deliver(decisionEvent, {
         signal: controller.signal,
         onBeforeSend: () => {
+          const current = this.getConfig();
           if (
             controller.signal.aborted ||
-            this._candidates.get(event.groupId) !== candidate
+            this._candidates.get(event.groupId) !== candidate ||
+            current.groupChat?.enabled !== true
           ) {
             throw Object.assign(new Error("群聊候选已失效"), { code: "CANCELLED" });
           }
@@ -569,34 +617,18 @@ export class GroupChatManager {
     score += Math.min(0.2, overlap);
 
     let memoryEvidence = false;
-    try {
-      const memoryKey = JSON.stringify(["group-memory", "onebot", anchor.groupId]);
-      const memories = await this.store.memories(memoryKey, { limit: 20, touch: false });
-      const probe = [text, ...previous.map((message) => message.text)].join(" ");
-      if (rankMatches(memories, probe, { limit: 3, textOf: (memory) => memory.text }).length) {
-        score += 0.16;
-        memoryEvidence = true;
+    if (config.memory?.enabled !== false) {
+      try {
+        const memoryKey = JSON.stringify(["group-memory", "onebot", anchor.groupId]);
+        const memories = await this.store.memories(memoryKey, { limit: 20, touch: false });
+        const probe = [text, ...previous.map((message) => message.text)].join(" ");
+        if (rankMatches(memories, probe, { limit: 3, textOf: (memory) => memory.text }).length) {
+          score += 0.16;
+          memoryEvidence = true;
+        }
+      } catch {
+        // Candidate scoring remains useful when memories are unavailable.
       }
-    } catch {
-      // Candidate scoring remains useful when memories are unavailable.
-    }
-
-    let privateInterestEvidence = false;
-    try {
-      const linked = config.identityLinks?.[`${anchor.channel}:${anchor.userId}`];
-      const privateMemoryKey =
-        typeof linked === "string" && linked.trim()
-          ? JSON.stringify(["identity-memory", linked.trim()])
-          : JSON.stringify(["private-memory", anchor.channel, anchor.userId]);
-      const privateMemories = await this.store.memories(privateMemoryKey, {
-        limit: 50,
-        touch: false,
-      });
-      privateInterestEvidence =
-        projectGroupSafePreferenceCategories(privateMemories, text).length > 0;
-      if (privateInterestEvidence) score += 0.08;
-    } catch {
-      privateInterestEvidence = false;
     }
 
     const personaText = [
@@ -649,14 +681,15 @@ export class GroupChatManager {
 
     if (recent90.length > 1) score -= Math.min(0.32, (recent90.length - 1) * 0.05);
     if (speakers.size > 2) score -= Math.min(0.12, (speakers.size - 2) * 0.03);
-    const active = this._mode(anchor.groupId, config) === "active";
-    if (active) score += 0.045;
-    const threshold = active ? 0.5 : 0.57;
+    const level = ["low", "medium", "high"].includes(settings.activityLevel)
+      ? settings.activityLevel
+      : "medium";
+    if (level === "high") score += 0.045;
+    const threshold = level === "high" ? 0.5 : level === "low" ? 0.64 : 0.57;
     const supportSignals = [
       topicEvidence ? "topic" : "",
       memoryEvidence ? "memory" : "",
       personaEvidence ? "interest" : "",
-      privateInterestEvidence ? "private_interest" : "",
       relationship >= 0.2 ? "relationship" : "",
       state.familiarity > 0.2501 ? "group_history" : "",
     ].filter(Boolean);
@@ -684,13 +717,21 @@ export class GroupChatManager {
   }
 
   _invalidatesCandidate(candidate, event) {
-    if (event.userId === candidate.anchorUserId) return false;
     if (event.quotedMessageId === candidate.anchorId) return true;
     if ((event.mentionIds ?? []).length > 0) return true;
     const terms = searchTerms(candidate.anchorText).filter(
       (term) => Array.from(term).length >= 2,
     );
     const overlap = searchScore(event.text, terms) > 0;
+    if (
+      event.userId === candidate.anchorUserId &&
+      cleanText(event.text).length >= 6 &&
+      terms.length > 0 &&
+      !overlap
+    ) {
+      return true;
+    }
+    if (event.userId === candidate.anchorUserId) return false;
     if (overlap && (QUESTION.test(candidate.anchorText) || cleanText(event.text))) {
       return true;
     }
@@ -709,12 +750,72 @@ export class GroupChatManager {
     }));
   }
 
-  _budgetAvailable(state, settings, now) {
-    if (settings.budgetPerHour === 0) return true;
-    state.modelCalls = (state.modelCalls ?? []).filter(
-      (time) => time > now - 60 * 60 * 1000,
+  _activityMetrics(groupId, settings) {
+    const now = this.now();
+    const recent = this._scene(groupId).messages.filter(
+      (message) =>
+        message.userId !== "self" &&
+        message.time >= now - settings.activityWindowSeconds * 1000,
     );
-    return state.modelCalls.length < settings.budgetPerHour;
+    return {
+      messages: recent.length,
+      speakers: new Set(recent.map((message) => message.userId)).size,
+    };
+  }
+
+  async reconcile() {
+    const settings = mergeGroupConfig(this.getConfig());
+    for (const candidate of this._candidates.values()) candidate.controller.abort();
+    this._candidates.clear();
+    this._evaluations.clear();
+    if (settings.enabled === true && settings.allowUnprompted === true) return;
+    if (settings.enabled !== true) {
+      for (const timer of this._responseTimers.values()) this.timerApi.clearTimeout(timer);
+      this._responseTimers.clear();
+      this._threads.clear();
+      this._scenes.clear();
+    }
+  }
+
+  _recentCalls(value, now) {
+    return (Array.isArray(value) ? value : []).filter(
+      (time) => Number(time) > now - 60 * 60 * 1000,
+    );
+  }
+
+  _budgetAvailable(state, settings, now, kind) {
+    state.modelCalls = this._recentCalls(state.modelCalls, now);
+    state.proactiveCalls = this._recentCalls(state.proactiveCalls, now);
+    state.continuationCalls = this._recentCalls(state.continuationCalls, now);
+    const proactiveLimit = nonNegative(settings.budgetPerHour, 6);
+    const continuationLimit = nonNegative(
+      settings.continuationBudgetPerHour,
+      12,
+    );
+    const totalLimit = nonNegative(settings.totalBudgetPerHour, 18);
+    if (totalLimit !== 0 && state.modelCalls.length >= totalLimit) return false;
+    if (kind === "continuation") {
+      return (
+        continuationLimit === 0 ||
+        state.continuationCalls.length < continuationLimit
+      );
+    }
+    return proactiveLimit === 0 || state.proactiveCalls.length < proactiveLimit;
+  }
+
+  _recordBudgetCall(state, kind, now) {
+    state.modelCalls = [...this._recentCalls(state.modelCalls, now), now].slice(-100);
+    if (kind === "continuation") {
+      state.continuationCalls = [
+        ...this._recentCalls(state.continuationCalls, now),
+        now,
+      ].slice(-100);
+    } else {
+      state.proactiveCalls = [
+        ...this._recentCalls(state.proactiveCalls, now),
+        now,
+      ].slice(-100);
+    }
   }
 
   _clearResponseTimer(groupId) {
@@ -733,18 +834,30 @@ export class GroupChatManager {
     const key = groupStateKey(event.groupId);
     const state = this._state(key);
     const now = this.now();
+    const previousThread = this._threads.get(event.groupId);
+    const anchorMessageId =
+      event.groupDecision?.anchorId ?? previousThread?.anchorMessageId ?? event.id;
+    const topicText =
+      event.groupDecision?.kind === "continuation"
+        ? previousThread?.topicText || event.text
+        : event.text;
     if (state.cooldownUntil <= now) state.consecutiveMessages += 1;
     const today = dayKey(now);
     if (state.lastFamiliarityDay !== today) {
       state.familiarity = Math.min(1, state.familiarity + 0.01);
       state.lastFamiliarityDay = today;
     }
-    if (state.consecutiveMessages >= settings.maxConsecutiveMessages) {
+    if (
+      event.groupDecision ||
+      state.consecutiveMessages >= settings.maxConsecutiveMessages
+    ) {
       state.cooldownUntil = now + settings.cooldownMinutes * 60 * 1000;
     }
     state.updatedAt = now;
     this._threads.set(event.groupId, {
       anchorUserId: event.userId,
+      anchorMessageId,
+      topicText: cleanText(topicText, 500),
       lastAliceAt: now,
       awaitingReply: true,
       explicitPending: false,
@@ -825,7 +938,7 @@ export class GroupChatManager {
 
   status() {
     return {
-      enabled: mergeGroupConfig(this.getConfig()).enabled !== false,
+      enabled: mergeGroupConfig(this.getConfig()).enabled === true,
       activeCandidates: [...this._candidates.values()].map((candidate) => ({
         group: groupStateKey(candidate.groupId),
         kind: candidate.kind,

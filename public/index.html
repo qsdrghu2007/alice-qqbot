@@ -132,6 +132,15 @@
             <h1 id="viewTitle">聊天</h1>
           </div>
           <div class="topbar-status">
+            <button class="runtime-mode-button" id="runtimeModeButton" type="button" aria-label="切换运行模式" title="切换运行模式">
+              <svg class="runtime-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 7h11l-3-3M17 17H6l3 3"></path>
+              </svg>
+              <span class="runtime-mode-copy">
+                <strong><span id="runtimeModeLabel">基础</span>模式</strong>
+                <small id="runtimeModeSource">运行模式 · 默认</small>
+              </span>
+            </button>
             <span class="badge badge-neutral" id="serverBadge">未连接</span>
             <span class="badge badge-demo" id="mobileDemoBadge">本地演示</span>
             <button class="icon-button mobile-pause-button" id="mobilePauseButton" type="button" aria-label="暂停机器人" title="暂停机器人">
@@ -229,6 +238,7 @@
                 登录空间
               </button>
             </div>
+            <div class="capability-notice" id="spaceCapabilityNotice" role="status" hidden>当前基础模式不可用：空间、空间评论与定时发布均禁用。</div>
 
             <div class="space-grid">
               <form class="form-panel" id="qzoneForm">
@@ -252,11 +262,11 @@
                   </label>
                   <label class="toggle-field" for="qzoneAutoPublishToggle">
                     <span>
-                      <strong>允许空间发布</strong>
-                      <small>手动发布和模型发布共用</small>
+                      <strong>允许自主发布</strong>
+                      <small>关闭后仅停止 AI/定时自主发布；手动明确发布仍受空间能力、权限与策略控制</small>
                     </span>
                     <span class="switch">
-                      <input id="qzoneAutoPublishToggle" type="checkbox" aria-label="允许空间发布">
+                      <input id="qzoneAutoPublishToggle" type="checkbox" aria-label="允许自主发布">
                       <span class="switch-track" aria-hidden="true"></span>
                     </span>
                   </label>
@@ -282,7 +292,7 @@
                 </div>
                 <p>使用 NapCat 4.18.18 或更高版本的原生扩展。当前仍需在真实账号上完成端到端验证。</p>
                 <p>“结果不明”或“重复请求”不会自动重发，以免产生重复说说。</p>
-                <p>此开关同时授权本页手动发布与模型工具发布；浏览器不会替你确认或补发。</p>
+                <p>“允许自主发布”只控制 AI/定时自主发布；手动明确发布仍受空间能力、权限与策略控制。浏览器不会替你确认或补发。</p>
                 <div class="qzone-login-state" id="qzoneLoginState" hidden></div>
               </aside>
             </div>
@@ -311,6 +321,7 @@
                 </svg>
               </button>
             </div>
+            <div class="capability-notice" id="stickerCapabilityNotice" role="status" hidden>当前基础模式不可用：表情库不可用。</div>
 
             <div class="sticker-toolbar">
               <div class="sticker-toolbar-main">
@@ -434,6 +445,7 @@
               </button>
             </div>
 
+            <div class="capability-notice" id="settingsCapabilityNotice" role="status" hidden>当前为基础模式。设置可以保存，但空间、表情库、主动私聊、体验审校及用户理解不会在当前模式执行；长期记忆与联网搜索仍由各自已保存配置控制。</div>
             <div class="inline-error" id="configError" role="alert" hidden></div>
             <div class="reconnect-notice" id="reconnectNotice" role="status" hidden>
               <span>传输配置已变更，需要重连才生效。</span>
@@ -449,7 +461,7 @@
                   人格
                 </legend>
                 <label class="field">
-                  <span>名称</span>
+                  <span>人格名称</span>
                   <input id="personaName" name="personaName" type="text" autocomplete="off">
                 </label>
               </fieldset>
@@ -487,15 +499,15 @@
                     <input id="aiTemperature" name="aiTemperature" type="number" min="0" max="2" step="0.1" inputmode="decimal">
                   </label>
                   <label class="field">
-                    <span>注入历史消息条数（0 = 全部保留）</span>
+                    <span>注入历史消息条数（0 = 当前保留的全部）</span>
                     <input id="aiHistoryMessages" name="aiHistoryMessages" type="number" min="0" max="1000" step="1" inputmode="numeric">
                   </label>
                   <label class="field field-wide">
-                    <span>System Prompt</span>
+                    <span>系统提示词（人格设定）</span>
                     <textarea id="aiSystemPrompt" name="aiSystemPrompt" rows="5"></textarea>
                   </label>
                 </div>
-                <p class="field-note">思考模式默认开启；low / high / max 控制推理强度。思考模式下 Temperature 不生效。历史消息只影响正常聊天上下文，填 0 表示注入当前保留的全部历史；当前每个会话最多保留 80 条。</p>
+                <p class="field-note">思考模式默认开启；low / high / max 控制推理强度。思考模式下 Temperature 不生效。历史条数按已提交的 user 与 assistant 各条计数，也就是 bot 参与并已提交的轮次，不是全部旁观群消息；默认 30，填 0 表示注入当前保留的全部历史，每个会话最多 80 条。</p>
                 <label class="toggle-field compact-toggle" for="demoMode">
                   <span>
                     <strong>演示模式</strong>
@@ -563,7 +575,7 @@
                     <input id="webSearchMaxContentChars" name="webSearchMaxContentChars" type="number" min="1000" max="20000" step="1000" inputmode="numeric">
                   </label>
                 </div>
-                <p class="field-note">Search / Fetch 按成功请求计费，约 ¥5 / 1000 次；默认每轮最多 4 次联网、6 次工具调用。私聊由 AI 判断，群聊只有明确说“搜一下 / 查一下”才联网。搜索结果不会写入聊天记录。</p>
+                <p class="field-note">Search / Fetch 按成功请求计费，约 ¥5 / 1000 次；默认每轮最多 4 次联网、6 次工具调用。私聊和显式群聊对话由 AI 按需判断，普通非 @ 主动插话不开放工具。搜索结果不会写入聊天记录。</p>
               </fieldset>
 
               <fieldset class="settings-group">
@@ -630,7 +642,7 @@
                 <p class="field-note">群聊记忆按群共享；私聊按账号隔离。自动提取失败不会影响正常回复。</p>
               </fieldset>
 
-              <fieldset class="settings-group">
+              <fieldset class="settings-group" id="settingsStickerCapability">
                 <legend>
                   <span class="legend-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="m5 16 4.5-4.5 3 3 2.5-2.5L19 16"></path><circle cx="9" cy="9" r="1.4"></circle></svg>
@@ -663,8 +675,8 @@
                     <input id="stickerMaxItems" name="stickerMaxItems" type="number" min="1" max="10000" step="1" inputmode="numeric">
                   </label>
                   <label class="field">
-                    <span>单张上限（MB）</span>
-                    <input id="stickerMaxFileSizeMb" name="stickerMaxFileSizeMb" type="number" min="0.001" max="8" step="0.5" inputmode="decimal">
+                    <span>单张上限（MiB）</span>
+                    <input id="stickerMaxFileSizeMib" name="stickerMaxFileSizeMib" type="number" min="0.001" max="8" step="0.001" inputmode="decimal">
                   </label>
                   <label class="field">
                     <span>可爱阈值（0–1）</span>
@@ -708,72 +720,66 @@
                 <div class="form-grid">
                   <label class="toggle-field compact-toggle" for="groupChatEnabled">
                     <span>
-                      <strong>启用自然群聊</strong>
-                      <small>关闭后仍可 @、叫名字或引用 bot 回复</small>
+                      <strong>启用群聊参与</strong>
+                      <small>默认关闭；开启后才会处理 OneBot 群消息</small>
                     </span>
                     <span class="switch">
                       <input id="groupChatEnabled" name="groupChatEnabled" type="checkbox" aria-label="启用自然群聊">
                       <span class="switch-track" aria-hidden="true"></span>
                     </span>
                   </label>
+                  <label class="field field-wide">
+                    <span>允许参与的群</span>
+                    <textarea id="groupChatAllowedGroups" name="groupChatAllowedGroups" rows="3" placeholder="群号，用逗号或换行分隔；留空表示不限制"></textarea>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="groupChatAllowUnprompted">
+                    <span>
+                      <strong>允许未被 @ 接话</strong>
+                      <small>关闭后仍响应 @、叫名字和引用 bot</small>
+                    </span>
+                    <span class="switch">
+                      <input id="groupChatAllowUnprompted" name="groupChatAllowUnprompted" type="checkbox" aria-label="允许未被 @ 接话">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
                   <label class="field">
-                    <span>默认模式</span>
-                    <select id="groupChatDefaultMode" name="groupChatDefaultMode">
-                      <option value="mention">仅 @ / 点名</option>
-                      <option value="natural">自然参与 · 保守</option>
-                      <option value="active">活跃参与</option>
+                    <span>参与积极度</span>
+                    <select id="groupChatActivityLevel" name="groupChatActivityLevel">
+                      <option value="low">低 · 少插话</option>
+                      <option value="medium">中 · 自然</option>
+                      <option value="high">高 · 更主动</option>
                     </select>
                   </label>
-                  <label class="field field-wide">
-                    <span>每群模式（每行“群号=mention/natural/active”）</span>
-                    <textarea id="groupChatModes" name="groupChatModes" rows="4" placeholder="123456789=natural&#10;987654321=mention"></textarea>
+                  <label class="field">
+                    <span>普通插话观察等待（毫秒）</span>
+                    <input id="groupChatWaitBaseMs" name="groupChatWaitBaseMs" type="number" min="1000" max="60000" step="500" inputmode="numeric">
                   </label>
                   <label class="field">
-                    <span>主动等待基础（毫秒）</span>
-                    <input id="groupChatWaitBaseMs" name="groupChatWaitBaseMs" type="number" min="0" max="300000" step="1000" inputmode="numeric">
+                    <span>连续参与窗口（分钟）</span>
+                    <input id="groupChatContinuationWindowMinutes" name="groupChatContinuationWindowMinutes" type="number" min="1" max="60" step="1" inputmode="numeric">
                   </label>
                   <label class="field">
-                    <span>每名群成员增加（毫秒）</span>
-                    <input id="groupChatWaitPerMemberMs" name="groupChatWaitPerMemberMs" type="number" min="0" max="10000" step="100" inputmode="numeric">
-                  </label>
-                  <label class="field">
-                    <span>每群每小时非点名模型预算</span>
+                    <span>普通主动发起（次/小时，0 = 不限）</span>
                     <input id="groupChatBudgetPerHour" name="groupChatBudgetPerHour" type="number" min="0" max="60" step="1" inputmode="numeric">
                   </label>
                   <label class="field">
-                    <span>退场冷却（分钟）</span>
+                    <span>续聊预算（次/小时，0 = 不限）</span>
+                    <input id="groupChatContinuationBudgetPerHour" name="groupChatContinuationBudgetPerHour" type="number" min="0" max="60" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>总主动预算（次/小时，0 = 不限）</span>
+                    <input id="groupChatTotalBudgetPerHour" name="groupChatTotalBudgetPerHour" type="number" min="0" max="60" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>群回忆历史搜索窗口（小时）</span>
+                    <input id="groupChatHistorySearchHours" name="groupChatHistorySearchHours" type="number" min="1" max="168" step="1" inputmode="numeric">
+                  </label>
+                  <label class="field">
+                    <span>普通发言冷却（分钟）</span>
                     <input id="groupChatCooldownMinutes" name="groupChatCooldownMinutes" type="number" min="1" max="1440" step="1" inputmode="numeric">
                   </label>
-                  <label class="field">
-                    <span>连续发言上限</span>
-                    <input id="groupChatMaxConsecutiveMessages" name="groupChatMaxConsecutiveMessages" type="number" min="1" max="10" step="1" inputmode="numeric">
-                  </label>
-                  <label class="field">
-                    <span>无人接话退场（分钟）</span>
-                    <input id="groupChatNoResponseMinutes" name="groupChatNoResponseMinutes" type="number" min="1" max="60" step="1" inputmode="numeric">
-                  </label>
-                  <label class="field">
-                    <span>短期现场条数</span>
-                    <input id="groupChatSceneMessages" name="groupChatSceneMessages" type="number" min="4" max="40" step="1" inputmode="numeric">
-                  </label>
-                  <label class="field">
-                    <span>现场时间窗（分钟）</span>
-                    <input id="groupChatSceneWindowMinutes" name="groupChatSceneWindowMinutes" type="number" min="1" max="120" step="1" inputmode="numeric">
-                  </label>
-                  <label class="field">
-                    <span>安静开始（0–23）</span>
-                    <input id="groupChatQuietStart" name="groupChatQuietStart" type="number" min="0" max="23" step="1" inputmode="numeric">
-                  </label>
-                  <label class="field">
-                    <span>安静结束（0–23）</span>
-                    <input id="groupChatQuietEnd" name="groupChatQuietEnd" type="number" min="0" max="23" step="1" inputmode="numeric">
-                  </label>
-                  <label class="field">
-                    <span>时区</span>
-                    <input id="groupChatTimezone" name="groupChatTimezone" type="text" placeholder="Asia/Shanghai" autocomplete="off" spellcheck="false">
-                  </label>
                 </div>
-                <p class="field-note">主动插话先等待“基础毫秒 + 群总人数 × 每成员毫秒”，默认约 30 秒起。多人对话、引用对象变化或话题被接走会取消过期候选；@、读取到的当前 bot 名字和引用 bot 消息不受等待、预算或主动冷却限制。人数读取失败时本次主动候选跳过，明确回复不受影响。</p>
+                <p class="field-note">默认每小时预算为：普通主动 6、续聊 12、总主动 18；填 0 表示不限，明确 @、叫名字和引用 bot 不占用这组主动/续聊预算。群回忆历史搜索窗口仅用于群聊 recall，默认 24 小时；私聊回忆固定搜索最近 7 天。</p>
               </fieldset>
 
               <fieldset class="settings-group">
@@ -820,7 +826,7 @@
                 <p class="field-note">纯表情包不增加延迟；最大延迟填 0 表示不设上限。每个会话独立计时，短回复不会被其他会话的长回复拖住。</p>
               </fieldset>
 
-              <fieldset class="settings-group">
+              <fieldset class="settings-group" id="settingsChatExitCapability">
                 <legend>
                   <span class="legend-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 1 7 7c0 2.2-1 3.8-2.2 5.1-.8.9-1.3 1.7-1.5 2.9H8.7c-.2-1.2-.7-2-1.5-2.9C6 13.8 5 12.2 5 10a7 7 0 0 1 7-7Z"></path><path d="M9 21h6M9 18h6"></path></svg>
@@ -858,7 +864,7 @@
                 <p class="field-note">判断为结束时只跳过当前文字回复；OneBot 私聊会尝试发一张应景表情包，官方 QQ 保持沉默。下一条消息会正常回复并清除终止时间。终止时间按私聊会话隔离。</p>
               </fieldset>
 
-              <fieldset class="settings-group">
+              <fieldset class="settings-group" id="settingsFollowUpCapability">
                 <legend>
                   <span class="legend-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3 2"></path></svg>
@@ -989,10 +995,6 @@
                     <span>允许的用户</span>
                     <textarea id="policyAllowedUsers" name="policyAllowedUsers" rows="3" placeholder="QQ 号，用逗号或换行分隔"></textarea>
                   </label>
-                  <label class="field">
-                    <span>允许的群</span>
-                    <textarea id="policyAllowedGroups" name="policyAllowedGroups" rows="3" placeholder="群号，用逗号或换行分隔"></textarea>
-                  </label>
                   <label class="field field-wide">
                     <span>允许执行动作的用户</span>
                     <textarea id="policyActionUsers" name="policyActionUsers" rows="3" placeholder="QQ 号，用逗号或换行分隔"></textarea>
@@ -1008,7 +1010,7 @@
                 </div>
               </fieldset>
 
-              <fieldset class="settings-group">
+              <fieldset class="settings-group" id="settingsQzoneCapability">
                 <legend>
                   <span class="legend-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M3.8 9h16.4M3.8 15h16.4M12 3.5c2.2 2.4 3.3 5.2 3.3 8.5s-1.1 6.1-3.3 8.5"></path></svg>
@@ -1024,9 +1026,12 @@
                     </span>
                   </label>
                   <label class="toggle-field compact-toggle" for="settingsQzoneAutoPublish">
-                    <span><strong>允许空间发布</strong></span>
+                    <span>
+                      <strong>允许自主发布</strong>
+                      <small>手动明确发布仍受空间能力、权限与策略控制</small>
+                    </span>
                     <span class="switch">
-                      <input id="settingsQzoneAutoPublish" name="settingsQzoneAutoPublish" type="checkbox" aria-label="允许空间发布">
+                      <input id="settingsQzoneAutoPublish" name="settingsQzoneAutoPublish" type="checkbox" aria-label="允许自主发布">
                       <span class="switch-track" aria-hidden="true"></span>
                     </span>
                   </label>
@@ -1043,7 +1048,7 @@
                 </div>
               </fieldset>
 
-              <fieldset class="settings-group">
+              <fieldset class="settings-group" id="settingsQzoneCommentsCapability">
                 <legend>
                   <span class="legend-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M8 10h8M8 14h5"></path></svg>
@@ -1170,7 +1175,7 @@
                 </div>
               </fieldset>
 
-              <fieldset class="settings-group">
+              <fieldset class="settings-group" id="settingsAutonomyCapability">
                 <legend>
                   <span class="legend-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3 2"></path></svg>
@@ -1181,7 +1186,7 @@
                   <label class="toggle-field compact-toggle" for="autonomyEnabled">
                     <span>
                       <strong>启用定时任务</strong>
-                      <small>仍需 AI Key、空间启用和允许空间发布均满足</small>
+                      <small>仍需 AI Key、空间启用和允许自主发布均满足</small>
                     </span>
                     <span class="switch">
                       <input id="autonomyEnabled" name="autonomyEnabled" type="checkbox" aria-label="启用定时发空间">
@@ -1294,7 +1299,7 @@
                   <dd id="autonomyLastError">未返回</dd>
                 </div>
               </dl>
-              <p>仅在 AI Key、空间启用和空间发布授权均满足时运行。真实账号端到端验证尚未完成，展示的状态不保证发布已经成功。</p>
+              <p>仅在 AI Key、空间启用和允许 AI/定时自主发布均满足时运行。真实账号端到端验证尚未完成，展示的状态不保证发布已经成功。</p>
             </section>
 
             <div class="diagnostic-actions">

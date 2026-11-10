@@ -125,6 +125,64 @@ test("rapid messages merge and reset the silent timer", async () => {
   assert.deepEqual(calls, [{ text: "第一句\n第二句\n第三句", count: 3 }]);
 });
 
+test("updated input delay reschedules messages that are still collecting", async () => {
+  const h = harness(async () => ({ status: "sent" }));
+  h.batcher.enqueue(event({ id: "config-a", text: "普通一句话" }));
+  assert.deepEqual(h.delays(), [2_000]);
+
+  h.batcher.updateConfig({ inputDelayMs: 3_500 });
+  assert.deepEqual(h.delays(), [3_500]);
+});
+
+test("idle states retain burst history briefly and are then reclaimed", async () => {
+  const h = harness(async () => ({ status: "sent" }));
+  h.batcher.enqueue(event({ id: "idle-a", text: "第一句" }));
+  h.fire();
+  await tick();
+
+  assert.equal(h.batcher.size(), 1);
+  assert.deepEqual(h.delays(), [180_000]);
+  h.fire();
+  await tick();
+  assert.equal(h.batcher.size(), 0);
+});
+
+test("new pending work cancels pending idle cleanup", async () => {
+  const h = harness(async () => ({ status: "sent" }));
+  h.batcher.enqueue(event({ id: "keep-a", text: "第一轮" }));
+  h.fire();
+  await tick();
+  assert.deepEqual(h.delays(), [180_000]);
+
+  h.batcher.enqueue(event({ id: "keep-b", text: "第二轮" }));
+  assert.deepEqual(h.delays(), [2_000]);
+
+  h.batcher.stop();
+  assert.deepEqual([...h.timers.values()], []);
+});
+
+test("merged events mark only a recent previous turn as active", async () => {
+  let now = 0;
+  const active = [];
+  const h = harness(
+    async ({ event: merged }) => {
+      active.push(merged.conversationActive);
+      return { status: "sent" };
+    },
+    { now: () => now },
+  );
+
+  for (const [id, at] of [["active-a", 0], ["active-b", 60_000], ["active-c", 240_001]]) {
+    now = at;
+    h.batcher.enqueue(event({ id }));
+    h.fire();
+    await tick();
+  }
+
+  assert.deepEqual(active, [false, true, false]);
+  h.batcher.stop();
+});
+
 test("unfinished input waits slightly longer while explicit questions keep the base delay", () => {
   assert.equal(calculateInputSilence("我跟你说", 2_000), 3_000);
   assert.equal(calculateInputSilence("我跟你说件事", 2_000), 3_000);

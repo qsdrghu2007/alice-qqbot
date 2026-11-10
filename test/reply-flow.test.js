@@ -102,6 +102,7 @@ async function runSegmentedFlow({
   secondText,
   replyDelay,
   random,
+  inputText = "原问题",
 }) {
   const events = [];
   const delivery = new ConversationDeliveryQueue({
@@ -134,7 +135,7 @@ async function runSegmentedFlow({
         events.push({ type: "send", text: reply.text });
       },
     },
-    event(),
+    event({ text: inputText }),
   );
   return events;
 }
@@ -262,6 +263,54 @@ test("transient legal commands send while paused without committing chat history
   assert.equal(outcome.status, "sent");
   assert.deepEqual(sent, ["Source: https://code.example/alice"]);
   assert.deepEqual(commits, []);
+});
+
+test("guarded acknowledgement silence commits the user turn without sending text", async () => {
+  const sent = [];
+  const commits = [];
+  const flow = flowFor({
+    getConfig: () => config(),
+    engine: {
+      async handle() {
+        return {
+          text: "",
+          faces: [],
+          images: [],
+          suppressed: true,
+          silent: true,
+          turn: {
+            assistantText: null,
+            userText: "嗯",
+          },
+        };
+      },
+      async commitDeliveredTurn(_reply, payload) {
+        commits.push(payload);
+      },
+    },
+    delivery: new ConversationDeliveryQueue(),
+  });
+
+  const outcome = await flow.processEvent(
+    {
+      send: async (_event, reply) => {
+        sent.push(reply.text);
+      },
+    },
+    event({ id: "silent-ack", text: "嗯" }),
+    { deferCommit: true, onBeforeSend: () => {} },
+  );
+
+  assert.equal(outcome.status, "suppressed");
+  assert.equal(outcome.silent, true);
+  assert.deepEqual(sent, []);
+  assert.deepEqual(commits, [
+    {
+      assistantText: null,
+      userTexts: [],
+      final: true,
+    },
+  ]);
 });
 
 test("segmented sends keep the first delivered segment, reuse the passive id, and commit the failure boundary", async () => {
@@ -441,6 +490,13 @@ test("each segment waits by its own text with shared jitter, cap, and slow pacin
     replyDelay,
     random: () => 1,
   });
+  const longInput = await runSegmentedFlow({
+    firstText: "好呀。",
+    secondText: sharedSecond,
+    replyDelay,
+    random: () => 1,
+    inputText: "长".repeat(300),
+  });
 
   assert.deepEqual(shortFirst, [
     { type: "queue-delay", ms: 1_236 },
@@ -450,6 +506,8 @@ test("each segment waits by its own text with shared jitter, cap, and slow pacin
   ]);
   assert.equal(longFirst[0].ms, 2_099);
   assert.deepEqual(longFirst.slice(2), shortFirst.slice(2));
+  assert.equal(longInput[0].ms, shortFirst[0].ms + 1_440);
+  assert.deepEqual(longInput.slice(2), shortFirst.slice(2));
   assert.deepEqual(longSecond.slice(0, 3), [
     { type: "queue-delay", ms: 2_099 },
     { type: "send", text: "这开头确实很长。" },

@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-Alice-Source-Available
 // See LICENSE and LICENSES/ALICE-SOURCE-AVAILABLE.md.
+import {
+  bytesToMib,
+  mibToBytes,
+  resolveRuntimeCapabilities,
+  resolveRuntimeModeInfo,
+} from "./config-values.js";
+
 const TOKEN_KEY = "xiaoyu.console.token";
 const CHAT_KEY = "xiaoyu.chat.recent";
 const CHAT_LIMIT = 30;
@@ -14,6 +21,12 @@ const MEMORY_SOURCE_LABELS = {
   auto: "自动",
   tool: "AI 工具",
   manual: "手动",
+};
+const RUNTIME_MODE_SOURCE_LABELS = {
+  config: "已保存",
+  environment: "环境变量",
+  default: "默认",
+  runtime: "服务状态",
 };
 
 class ApiError extends Error {
@@ -33,6 +46,8 @@ const state = {
   statusUpdatedAt: null,
   config: null,
   configLoaded: false,
+  runtimeCapabilities: resolveRuntimeCapabilities(),
+  runtimeMode: resolveRuntimeModeInfo(),
   memories: [],
   memoriesLoaded: false,
   memoryScopes: [],
@@ -62,6 +77,9 @@ const elements = {
   mobilePauseButton: document.querySelector("#mobilePauseButton"),
   connectionBadge: document.querySelector("#connectionBadge"),
   serverBadge: document.querySelector("#serverBadge"),
+  runtimeModeButton: document.querySelector("#runtimeModeButton"),
+  runtimeModeLabel: document.querySelector("#runtimeModeLabel"),
+  runtimeModeSource: document.querySelector("#runtimeModeSource"),
   statusFreshness: document.querySelector("#statusFreshness"),
   sideServer: document.querySelector("#sideServer"),
   sideAi: document.querySelector("#sideAi"),
@@ -100,6 +118,7 @@ const elements = {
   qzonePublishButton: document.querySelector("#qzonePublishButton"),
   qzoneLoginButton: document.querySelector("#qzoneLoginButton"),
   qzoneLoginState: document.querySelector("#qzoneLoginState"),
+  spaceCapabilityNotice: document.querySelector("#spaceCapabilityNotice"),
   qzoneResult: document.querySelector("#qzoneResult"),
   qzoneResultBadge: document.querySelector("#qzoneResultBadge"),
   qzoneResultTitle: document.querySelector("#qzoneResultTitle"),
@@ -128,6 +147,7 @@ const elements = {
   stickerError: document.querySelector("#stickerError"),
   stickerGrid: document.querySelector("#stickerGrid"),
   stickerEmpty: document.querySelector("#stickerEmpty"),
+  stickerCapabilityNotice: document.querySelector("#stickerCapabilityNotice"),
   stickerUploadDialog: document.querySelector("#stickerUploadDialog"),
   stickerUploadForm: document.querySelector("#stickerUploadForm"),
   stickerUploadFile: document.querySelector("#stickerUploadFile"),
@@ -154,6 +174,7 @@ const elements = {
   configForm: document.querySelector("#configForm"),
   configError: document.querySelector("#configError"),
   configSaveState: document.querySelector("#configSaveState"),
+  settingsCapabilityNotice: document.querySelector("#settingsCapabilityNotice"),
   saveConfigButton: document.querySelector("#saveConfigButton"),
   refreshConfigButton: document.querySelector("#refreshConfigButton"),
   reconnectNotice: document.querySelector("#reconnectNotice"),
@@ -176,7 +197,7 @@ const elements = {
   stickerEnabled: document.querySelector("#stickerEnabled"),
   stickerAutoCollect: document.querySelector("#stickerAutoCollect"),
   stickerMaxItems: document.querySelector("#stickerMaxItems"),
-  stickerMaxFileSizeMb: document.querySelector("#stickerMaxFileSizeMb"),
+  stickerMaxFileSizeMib: document.querySelector("#stickerMaxFileSizeMib"),
   stickerMinCuteScore: document.querySelector("#stickerMinCuteScore"),
   stickerMinInterestingScore: document.querySelector("#stickerMinInterestingScore"),
   stickerProactiveCooldownMinutes: document.querySelector("#stickerProactiveCooldownMinutes"),
@@ -190,19 +211,22 @@ const elements = {
   maxToolCallsPerTurn: document.querySelector("#maxToolCallsPerTurn"),
   inputDelayMs: document.querySelector("#inputDelayMs"),
   groupChatEnabled: document.querySelector("#groupChatEnabled"),
-  groupChatDefaultMode: document.querySelector("#groupChatDefaultMode"),
-  groupChatModes: document.querySelector("#groupChatModes"),
+  groupChatAllowedGroups: document.querySelector("#groupChatAllowedGroups"),
+  groupChatAllowUnprompted: document.querySelector("#groupChatAllowUnprompted"),
+  groupChatActivityLevel: document.querySelector("#groupChatActivityLevel"),
   groupChatWaitBaseMs: document.querySelector("#groupChatWaitBaseMs"),
-  groupChatWaitPerMemberMs: document.querySelector("#groupChatWaitPerMemberMs"),
+  groupChatContinuationWindowMinutes: document.querySelector(
+    "#groupChatContinuationWindowMinutes",
+  ),
   groupChatBudgetPerHour: document.querySelector("#groupChatBudgetPerHour"),
+  groupChatContinuationBudgetPerHour: document.querySelector(
+    "#groupChatContinuationBudgetPerHour",
+  ),
+  groupChatTotalBudgetPerHour: document.querySelector(
+    "#groupChatTotalBudgetPerHour",
+  ),
+  groupChatHistorySearchHours: document.querySelector("#groupChatHistorySearchHours"),
   groupChatCooldownMinutes: document.querySelector("#groupChatCooldownMinutes"),
-  groupChatMaxConsecutiveMessages: document.querySelector("#groupChatMaxConsecutiveMessages"),
-  groupChatNoResponseMinutes: document.querySelector("#groupChatNoResponseMinutes"),
-  groupChatQuietStart: document.querySelector("#groupChatQuietStart"),
-  groupChatQuietEnd: document.querySelector("#groupChatQuietEnd"),
-  groupChatTimezone: document.querySelector("#groupChatTimezone"),
-  groupChatSceneMessages: document.querySelector("#groupChatSceneMessages"),
-  groupChatSceneWindowMinutes: document.querySelector("#groupChatSceneWindowMinutes"),
   replyDelayEnabled: document.querySelector("#replyDelayEnabled"),
   replyDelayTypingIndicator: document.querySelector("#replyDelayTypingIndicator"),
   replyDelayBaseMs: document.querySelector("#replyDelayBaseMs"),
@@ -230,11 +254,11 @@ const elements = {
   policyAutoActions: document.querySelector("#policyAutoActions"),
   policyPaused: document.querySelector("#policyPaused"),
   policyAllowedUsers: document.querySelector("#policyAllowedUsers"),
-  policyAllowedGroups: document.querySelector("#policyAllowedGroups"),
   policyActionUsers: document.querySelector("#policyActionUsers"),
   policyCooldownMs: document.querySelector("#policyCooldownMs"),
   policyMaxActionsPerHour: document.querySelector("#policyMaxActionsPerHour"),
   qzoneEnabled: document.querySelector("#qzoneEnabled"),
+  settingsQzoneCapability: document.querySelector("#settingsQzoneCapability"),
   settingsQzoneAutoPublish: document.querySelector("#settingsQzoneAutoPublish"),
   qzoneHeadless: document.querySelector("#qzoneHeadless"),
   qzoneCommentsEnabled: document.querySelector("#qzoneCommentsEnabled"),
@@ -260,12 +284,19 @@ const elements = {
   qzoneCommentsStatus: document.querySelector("#qzoneCommentsStatus"),
   qzoneCommentsError: document.querySelector("#qzoneCommentsError"),
   qzoneCommentsPollButton: document.querySelector("#qzoneCommentsPollButton"),
+  settingsQzoneCommentsCapability: document.querySelector(
+    "#settingsQzoneCommentsCapability",
+  ),
   autonomyEnabled: document.querySelector("#autonomyEnabled"),
   autonomyIntervalMinutes: document.querySelector("#autonomyIntervalMinutes"),
   autonomyPrompt: document.querySelector("#autonomyPrompt"),
   autonomyQuietStart: document.querySelector("#autonomyQuietStart"),
   autonomyQuietEnd: document.querySelector("#autonomyQuietEnd"),
   autonomyTimezone: document.querySelector("#autonomyTimezone"),
+  settingsAutonomyCapability: document.querySelector("#settingsAutonomyCapability"),
+  settingsStickerCapability: document.querySelector("#settingsStickerCapability"),
+  settingsChatExitCapability: document.querySelector("#settingsChatExitCapability"),
+  settingsFollowUpCapability: document.querySelector("#settingsFollowUpCapability"),
   refreshStatusButton: document.querySelector("#refreshStatusButton"),
   reconnectButton: document.querySelector("#reconnectButton"),
   exportButton: document.querySelector("#exportButton"),
@@ -285,6 +316,78 @@ const elements = {
   autonomyLastError: document.querySelector("#autonomyLastError"),
   toastRegion: document.querySelector("#toastRegion"),
 };
+
+function setCapabilityRootDisabled(root, disabled) {
+  if (!root) return;
+  const controls = root.matches("fieldset, input, button, textarea, select")
+    ? [root]
+    : [...root.querySelectorAll("input, button, textarea, select")];
+  for (const control of controls) {
+    if (disabled) {
+      if (!control.disabled) {
+        control.disabled = true;
+        control.dataset.capabilityDisabled = "true";
+      }
+    } else if (control.dataset.capabilityDisabled === "true") {
+      control.disabled = false;
+      delete control.dataset.capabilityDisabled;
+    }
+  }
+  root.dataset.capabilityDisabled = disabled ? "true" : "false";
+}
+
+function applyRuntimeCapabilities(payload) {
+  const capabilities = resolveRuntimeCapabilities(payload);
+  state.runtimeCapabilities = capabilities;
+  state.runtimeMode = resolveRuntimeModeInfo(payload);
+  const disableFor = (key, selectors) => {
+    for (const selector of selectors) {
+      setCapabilityRootDisabled(document.querySelector(selector), !capabilities[key]);
+    }
+  };
+  disableFor("space", ["#view-space"]);
+  disableFor("stickers", [
+    "#view-stickers",
+    "#stickerUploadDialog",
+    "#stickerPreviewDialog",
+  ]);
+  setCapabilityRootDisabled(elements.policyAutoActions, false);
+  setCapabilityRootDisabled(
+    elements.qzoneCommentsPollButton,
+    !capabilities.externalActions,
+  );
+  for (const notice of [
+    elements.spaceCapabilityNotice,
+    elements.stickerCapabilityNotice,
+    elements.settingsCapabilityNotice,
+  ]) {
+    if (notice) notice.hidden = !capabilities.basicMode;
+  }
+  renderRuntimeMode();
+}
+
+function renderRuntimeMode() {
+  const mode = state.runtimeMode.mode === "full" ? "full" : "basic";
+  const source = RUNTIME_MODE_SOURCE_LABELS[state.runtimeMode.source] || "服务状态";
+  const target = mode === "full" ? "基础" : "完整";
+  if (elements.runtimeModeLabel) {
+    elements.runtimeModeLabel.textContent = mode === "full" ? "完整" : "基础";
+  }
+  if (elements.runtimeModeSource) {
+    elements.runtimeModeSource.textContent = `运行模式 · ${source}`;
+  }
+  if (elements.runtimeModeButton) {
+    elements.runtimeModeButton.classList.toggle("is-full", mode === "full");
+    elements.runtimeModeButton.dataset.mode = mode;
+    elements.runtimeModeButton.setAttribute("aria-pressed", String(mode === "full"));
+    elements.runtimeModeButton.setAttribute(
+      "aria-label",
+      `当前${mode === "full" ? "完整" : "基础"}模式，点击切换到${target}模式`,
+    );
+    elements.runtimeModeButton.title =
+      `当前${mode === "full" ? "完整" : "基础"}模式（来源：${source}），点击切换到${target}模式`;
+  }
+}
 
 function resolveConsoleToken() {
   const hash = window.location.hash.startsWith("#")
@@ -808,6 +911,7 @@ async function loadStatus({ notify = false } = {}) {
   setNodeText(elements.statusFreshness, "检查中");
   try {
     const payload = await requestJson("/api/status", { method: "GET" });
+    applyRuntimeCapabilities(payload);
     state.status = extractStatus(payload);
     state.serverReachable = true;
     state.statusUpdatedAt = new Date();
@@ -891,8 +995,8 @@ function fillConfigForm(config) {
   const maxFileSizeBytes = Number(
     firstDefined(readPath(config, "stickers.maxFileSizeBytes"), 4 * 1024 * 1024),
   );
-  elements.stickerMaxFileSizeMb.value = String(
-    Number.isFinite(maxFileSizeBytes) ? maxFileSizeBytes / (1024 * 1024) : 4,
+  elements.stickerMaxFileSizeMib.value = String(
+    Number.isFinite(maxFileSizeBytes) ? bytesToMib(maxFileSizeBytes) : 4,
   );
   elements.stickerMinCuteScore.value = String(
     firstDefined(readPath(config, "stickers.minCuteScore"), 0.6) ?? "",
@@ -921,36 +1025,29 @@ function fillConfigForm(config) {
   elements.maxToolCallsPerTurn.value = String(
     firstDefined(readPath(config, "maxToolCallsPerTurn"), 6) ?? "",
   );
-  elements.groupChatEnabled.checked = readPath(config, "groupChat.enabled") !== false;
-  elements.groupChatDefaultMode.value = String(
-    firstDefined(readPath(config, "groupChat.defaultMode"), "natural") || "natural",
-  );
-  elements.groupChatModes.value = formatGroupModes(
-    readPath(config, "groupChat.modes"),
+  elements.groupChatEnabled.checked = readPath(config, "groupChat.enabled") === true;
+  elements.groupChatAllowUnprompted.checked =
+    readPath(config, "groupChat.allowUnprompted") !== false;
+  elements.groupChatActivityLevel.value = String(
+    firstDefined(readPath(config, "groupChat.activityLevel"), "medium") || "medium",
   );
   for (const [element, key, fallback] of [
-    [elements.groupChatWaitBaseMs, "proactiveWaitBaseMs", 30000],
-    [elements.groupChatWaitPerMemberMs, "proactiveWaitPerMemberMs", 1200],
+    [elements.groupChatWaitBaseMs, "proactiveWaitBaseMs", 6000],
+    [
+      elements.groupChatContinuationWindowMinutes,
+      "continuationWindowMinutes",
+      3,
+    ],
     [elements.groupChatBudgetPerHour, "budgetPerHour", 6],
+    [elements.groupChatContinuationBudgetPerHour, "continuationBudgetPerHour", 12],
+    [elements.groupChatTotalBudgetPerHour, "totalBudgetPerHour", 18],
+    [elements.groupChatHistorySearchHours, "historySearchHours", 24],
     [elements.groupChatCooldownMinutes, "cooldownMinutes", 4],
-    [elements.groupChatMaxConsecutiveMessages, "maxConsecutiveMessages", 3],
-    [elements.groupChatNoResponseMinutes, "noResponseMinutes", 2],
-    [elements.groupChatSceneMessages, "sceneMessages", 12],
-    [elements.groupChatSceneWindowMinutes, "sceneWindowMinutes", 10],
   ]) {
     element.value = String(
       firstDefined(readPath(config, `groupChat.${key}`), fallback) ?? "",
     );
   }
-  elements.groupChatQuietStart.value = String(
-    firstDefined(readPath(config, "groupChat.quietHours.start"), 23) ?? "",
-  );
-  elements.groupChatQuietEnd.value = String(
-    firstDefined(readPath(config, "groupChat.quietHours.end"), 8) ?? "",
-  );
-  elements.groupChatTimezone.value = String(
-    firstDefined(readPath(config, "groupChat.timezone"), "Asia/Shanghai") || "",
-  );
   elements.replyDelayEnabled.checked = readPath(config, "replyDelay.enabled") !== false;
   elements.replyDelayTypingIndicator.checked =
     readPath(config, "replyDelay.typingIndicator") !== false;
@@ -1012,7 +1109,7 @@ function fillConfigForm(config) {
   elements.policyAllowedUsers.value = normalizeStringArray(
     readPath(config, "policy.allowedUsers"),
   ).join("\n");
-  elements.policyAllowedGroups.value = normalizeStringArray(
+  elements.groupChatAllowedGroups.value = normalizeStringArray(
     readPath(config, "policy.allowedGroups"),
   ).join("\n");
   elements.policyActionUsers.value = normalizeStringArray(
@@ -1090,6 +1187,7 @@ async function loadConfig({ notify = false } = {}) {
   if (!state.token) return false;
   try {
     const payload = await requestJson("/api/config", { method: "GET" });
+    applyRuntimeCapabilities(payload);
     fillConfigForm(unwrapConfig(payload));
     loadQzoneCommentsStatus().catch(() => {});
     if (notify) showToast("设置已刷新。");
@@ -1190,22 +1288,6 @@ function formatList(value) {
   return Array.isArray(value) ? value.map(String).join("\n") : "";
 }
 
-function formatGroupModes(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
-  return Object.entries(value)
-    .map(([groupId, mode]) => `${groupId}=${mode}`)
-    .join("\n");
-}
-
-function parseGroupModes(value) {
-  const modes = {};
-  for (const line of String(value || "").split(/[\n,，;；]+/u)) {
-    const match = /^\s*(\d+)\s*(?:=|:|：)\s*(mention|natural|active)\s*$/iu.exec(line);
-    if (match) modes[match[1]] = match[2].toLowerCase();
-  }
-  return modes;
-}
-
 function parseListInput(value) {
   const values = String(value || "")
     .split(/[,\n，]+/)
@@ -1250,13 +1332,13 @@ function collectConfigPatch() {
     autoActions: elements.policyAutoActions.checked,
     paused: elements.policyPaused.checked,
     allowedUsers: parseListInput(elements.policyAllowedUsers.value),
-    allowedGroups: parseListInput(elements.policyAllowedGroups.value),
+    allowedGroups: parseListInput(elements.groupChatAllowedGroups.value),
     actionUsers: parseListInput(elements.policyActionUsers.value),
     cooldownMs: numberValue(elements.policyCooldownMs),
     maxActionsPerHour: numberValue(elements.policyMaxActionsPerHour),
   };
 
-  const stickerMaxFileSizeMb = numberValue(elements.stickerMaxFileSizeMb);
+  const stickerMaxFileSizeMib = numberValue(elements.stickerMaxFileSizeMib);
   return {
     demo: elements.demoMode.checked,
     inputDelayMs: numberValue(elements.inputDelayMs),
@@ -1267,8 +1349,8 @@ function collectConfigPatch() {
       enabled: elements.stickerEnabled.checked,
       autoCollect: elements.stickerAutoCollect.checked,
       maxItems: numberValue(elements.stickerMaxItems),
-      maxFileSizeBytes: Number.isFinite(stickerMaxFileSizeMb)
-        ? Math.round(stickerMaxFileSizeMb * 1024 * 1024)
+      maxFileSizeBytes: Number.isFinite(stickerMaxFileSizeMib)
+        ? mibToBytes(stickerMaxFileSizeMib)
         : undefined,
       minCuteScore: numberValue(elements.stickerMinCuteScore),
       minInterestingScore: numberValue(elements.stickerMinInterestingScore),
@@ -1297,23 +1379,19 @@ function collectConfigPatch() {
     },
     groupChat: {
       enabled: elements.groupChatEnabled.checked,
-      defaultMode: elements.groupChatDefaultMode.value,
-      modes: parseGroupModes(elements.groupChatModes.value),
+      allowUnprompted: elements.groupChatAllowUnprompted.checked,
+      activityLevel: elements.groupChatActivityLevel.value,
       proactiveWaitBaseMs: numberValue(elements.groupChatWaitBaseMs),
-      proactiveWaitPerMemberMs: numberValue(elements.groupChatWaitPerMemberMs),
-      budgetPerHour: numberValue(elements.groupChatBudgetPerHour),
-      cooldownMinutes: numberValue(elements.groupChatCooldownMinutes),
-      maxConsecutiveMessages: numberValue(
-        elements.groupChatMaxConsecutiveMessages,
+      continuationWindowMinutes: numberValue(
+        elements.groupChatContinuationWindowMinutes,
       ),
-      noResponseMinutes: numberValue(elements.groupChatNoResponseMinutes),
-      sceneMessages: numberValue(elements.groupChatSceneMessages),
-      sceneWindowMinutes: numberValue(elements.groupChatSceneWindowMinutes),
-      quietHours: {
-        start: numberValue(elements.groupChatQuietStart),
-        end: numberValue(elements.groupChatQuietEnd),
-      },
-      timezone: elements.groupChatTimezone.value.trim(),
+      budgetPerHour: numberValue(elements.groupChatBudgetPerHour),
+      continuationBudgetPerHour: numberValue(
+        elements.groupChatContinuationBudgetPerHour,
+      ),
+      totalBudgetPerHour: numberValue(elements.groupChatTotalBudgetPerHour),
+      historySearchHours: numberValue(elements.groupChatHistorySearchHours),
+      cooldownMinutes: numberValue(elements.groupChatCooldownMinutes),
     },
     replyDelay: {
       enabled: elements.replyDelayEnabled.checked,
@@ -1421,7 +1499,12 @@ async function saveConfig() {
     });
     setNodeText(elements.configSaveState, "已保存");
     showToast("设置已保存。");
-    await Promise.allSettled([loadConfig(), loadStatus(), loadQzoneCommentsStatus()]);
+    await Promise.allSettled([
+      loadConfig(),
+      loadStatus(),
+      loadQzoneCommentsStatus(),
+      ...(state.stickersLoaded ? [loadStickers()] : []),
+    ]);
     elements.reconnectNotice.hidden = !transportChanged;
   } catch (error) {
     setNodeText(elements.configSaveState, "保存失败");
@@ -1429,6 +1512,34 @@ async function saveConfig() {
     showToast(getErrorMessage(error), "error");
   } finally {
     setBusy(elements.saveConfigButton, false);
+  }
+}
+
+async function toggleRuntimeMode() {
+  if (!state.token) {
+    showTokenProblem();
+    showToast("需要有效的控制台 token。", "error");
+    return;
+  }
+  const nextMode = state.runtimeMode.mode === "full" ? "basic" : "full";
+  setBusy(elements.runtimeModeButton, true);
+  try {
+    const payload = await requestJson("/api/config", {
+      method: "POST",
+      body: { runtimeMode: nextMode },
+    });
+    applyRuntimeCapabilities(payload);
+    await Promise.allSettled([loadConfig(), loadStatus()]);
+    showToast(
+      nextMode === "full"
+        ? "已切换到完整模式；各模块继续按已保存开关执行。"
+        : "已切换到基础模式；已保存配置保留，受限功能暂不执行。",
+    );
+  } catch (error) {
+    showToast(getErrorMessage(error), "error");
+  } finally {
+    setBusy(elements.runtimeModeButton, false);
+    renderRuntimeMode();
   }
 }
 
@@ -2538,7 +2649,7 @@ async function uploadSticker() {
   if (file.size > maxBytes) {
     setInlineError(
       elements.stickerUploadError,
-      `图片不能超过 ${Math.round(maxBytes / 1024 / 1024)} MB。`,
+      `图片不能超过 ${Number((maxBytes / 1024 / 1024).toFixed(3))} MiB。`,
     );
     return;
   }
@@ -2766,7 +2877,11 @@ async function updateQzoneAutoPublish(checked) {
       body: { qzone: { autoPublish: checked } },
     });
     elements.settingsQzoneAutoPublish.checked = checked;
-    showToast(checked ? "已允许空间手动发布和模型发布。" : "已关闭所有空间发布。");
+    showToast(
+      checked
+        ? "已允许 AI/定时自主发布。"
+        : "已关闭 AI/定时自主发布；手动明确发布不受此开关影响。",
+    );
     await loadConfig();
   } catch (error) {
     elements.qzoneAutoPublishToggle.checked = !checked;
@@ -2891,7 +3006,7 @@ async function importData(file) {
   setInlineError(elements.diagnosticError, "");
   try {
     if (file.size > 10 * 1024 * 1024) {
-      throw new ApiError("导入文件不能超过 16 MB。");
+      throw new ApiError("导入文件不能超过 10 MiB。");
     }
     const raw = await file.text();
     let data;
@@ -2971,6 +3086,7 @@ function bindEvents() {
   elements.mobilePauseButton.addEventListener("click", () => {
     changePause(!state.paused);
   });
+  elements.runtimeModeButton.addEventListener("click", toggleRuntimeMode);
 
   elements.chatForm.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -3094,6 +3210,7 @@ async function initialize() {
   renderMemories();
   renderStickers();
   renderStatus();
+  renderRuntimeMode();
 
   if (!state.token) {
     showTokenProblem();

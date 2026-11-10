@@ -15,7 +15,7 @@
 - 不要提交 `data/`、`napcat/`、备份目录或任何密钥。
 - 修改前先完整备份项目；`data/` 含 AI Key、OneBot 令牌和表情库。
 - 保留根 `LICENSE`、`LICENSES/ALICE-SOURCE-AVAILABLE.md`、`LICENSES/COMMUNITY-PERMISSION.md`、历史 MIT、v0.3.0 历史材料与第三方声明；不要给 v0.4.0+ 加回 MIT/AGPL 可选路径。
-- 当前封闭非商业许可上限是 `MAX_AUTHORIZED_USERS = 3`（管理员计入并合并同一运营者实例）；所有商业使用必须事先书面同意并签独立收入分成协议，超过 3 人的非商业、公开或组织生产使用须另行书面授权。
+- 当前 `LICENSE` 的非商业授权上限是 20 名 Authorized Users（管理员计入并合并同一运营者实例）；所有商业使用必须事先书面同意并签独立收入分成协议，超过 20 人的非商业、公开或组织生产使用须另行书面授权。
 - 修改网络版本时同步维护 `ALICE_SOURCE_URL` 与 `/source`、`/license` 入口；入口用于展示部署源码与当前条款，不代表当前版本存在 AGPL §13 义务。
 - 服务只监听 `127.0.0.1`，所有 `/api` 请求必须保留 Bearer、Host/Origin 校验。
 - 不要读取或输出 NapCat Cookie、QQ 凭证、AI Key、真实账号信息。
@@ -38,6 +38,7 @@ Windows 启动顺序：先 `start-onebot.bat`，再 `start.bat`。控制台令�
 
 - 人格：Alice。
 - 稳定人格状态：`persona.preferences/opinions`（各最多 8 条）写入静态 system，作为 Alice 自己的喜好和观点；用户偏好/边界另存于安全跨场景画像。
+- 运行模式：顶部按钮切换并保存 `runtimeMode`；`basic` 仅临时关闭高级外发/状态能力，不覆盖设置页保存值。人格名称、System Prompt 和人格项通过 Web 保存后热更新后续轮次。
 - 默认模型：`deepseek-flash`。
 - 思考强度：`ai.reasoningEffort`，可选 `low` / `high` / `max`，网页可切换。
 - 回复风格：`src/engine.js` 末尾的 `STYLE_CONTRACT` 强制短回复；基础人格在 `ai.systemPrompt`。直接注入的历史条数由 `ai.historyMessages` 控制，默认 30，0 表示注入当前保留的全部历史；仍提示模型不要模仿旧风格。
@@ -46,10 +47,10 @@ Windows 启动顺序：先 `start-onebot.bat`，再 `start.bat`。控制台令�
 - 打字延迟：`src/delivery.js`；仅 QQ/OneBot，按字数计时，纯表情包跳过，不同会话独立队列。
 - 延迟配置：`replyDelay.enabled/typingIndicator/baseMs/msPerChar/maxMs/jitter`，设置页可调基础延迟、每字延迟、最大延迟和“正在输入”开关。
 - 连续消息合并：`src/message-batcher.js`；仅 OneBot/官方 QQ，按会话+发送者合并，最后一条消息后等待 `inputDelayMs`（默认 2000ms）再开始 typing；明显未完句会追加有界语义等待。生成期明确 ACK 作为补充保留，实质新消息打断并重新合并；网页本机不合并。`policy.cooldownMs` 只限制外发，不得丢弃入站消息。
-- 群聊参与：`src/group-chat.js`；OneBot 非 @ 消息进入有界内存现场。@、当前 `persona.name`、引用 bot 是明确召唤；非点名只在群模式 `natural/active` 建立候选，主动等待为 `30000 + 群总人数 × 1200ms`，每群默认每小时 6 次模型预算，连续/无人接话后默认冷却 4 分钟。人数缺失跳过主动候选，明确回复不受影响。
+- 群聊参与：`src/group-chat.js`；OneBot 非 @ 消息进入有界内存现场。@、当前 `persona.name`、引用 bot 是明确召唤；非点名只在 `allowUnprompted` 开启时建立候选，主动等待从 `proactiveWaitBaseMs` 起算并按近期消息量、不同发言人数和 `activityLevel` 调整，每群默认每小时 6 次普通主动、12 次续聊、18 次总主动预算，连续/无人接话后默认冷却 4 分钟。
 - 群聊模型成本：非点名候选禁用工具、审校和自动记忆提取，以一次关闭思考、500 tokens 的 JSON 结果选择短句、QQ 表情、收藏表情或沉默；回复为 transient，不写正常群历史。明确请求仍走完整原链路。候选预算在模型调用前记账，silence/取消也占用。
 - 群聊边界：明确召唤发送前同一成员的非 @ 续句返回 `pending_continuation`，进入原 MessageBatcher；其他成员热聊不清除无人接话冷却。泛问和没有话题/记忆/兴趣/关系/已学习互动支撑的普通问题不能独立形成候选。私聊长期偏好最多投影为固定宽泛兴趣类别，原文和具体私事不进群提示词。
-- 群配置：`groupChat.enabled/defaultMode/modes/quietHours/timezone/proactiveWaitBaseMs/proactiveWaitPerMemberMs/budgetPerHour/cooldownMinutes/maxConsecutiveMessages/noResponseMinutes/sceneMessages/sceneWindowMinutes`；设置页可编辑。默认 `natural`，每群模式只能 `mention/natural/active`。
+- 群配置：Web 主项为 `groupChat.enabled/allowUnprompted/activityLevel/quietHours/timezone/proactiveWaitBaseMs/activityWindowSeconds/continuationWindowMinutes/budgetPerHour/continuationBudgetPerHour/totalBudgetPerHour/historySearchHours/cooldownMinutes/maxConsecutiveMessages/noResponseMinutes/sceneMessages/sceneWindowMinutes`。`defaultMode/modes` 仅为旧配置兼容，不再作为当前 Web 主操作方式。
 - 分段发送：`src/index.js` 的 `createReplyFlow()` + `src/delivery.js`；仅 QQ/OneBot 纯文本，最多两段并带随机停顿。代码、URL、结构化输出、动作结果、图片或表情不拆分；`replyDelay.enabled=false` 时关闭分段。
 - 打断规则：静默期、AI 生成、搜索/抓取、结束判断、打字 delay 期间来新消息都立即中断当前轮，保留未回复消息并重新等待 `inputDelayMs`；调用 `adapter.send` 后不再中断，新消息进入下一批。
 - 历史一致性：`Engine.handle(event,{signal,deferCommit:true})` 只生成草稿；进入发送边界时 `Engine.commitTurn(reply)` 写 user+assistant；发送前取消的草稿不写历史。
@@ -59,7 +60,7 @@ Windows 启动顺序：先 `start-onebot.bat`，再 `start.bat`。控制台令�
 - 收尾表情：OneBot 终止后用 `stickers.claim({force:true, mood})` 发一张表情，不发任何文字；官方 QQ 不支持图片，保持沉默。
 - 主动回访：`src/follow-up.js`；终止判断返回 `followup_minutes`，有效范围 5–1440 分钟，23–8 点顺延；仅 OneBot 私聊，每次终止只回访一次，用户提前回复会清除状态。回访只读取目标用户从 `ConversationState.visibleContext()` 得到的安全画像和上下文，不读取其他群成员或全局情绪。
 - 回访时间非法：先终止并发表情，后台立即连续带最近 20 条上下文让 AI 重选，直到合法；AI 请求失败则本次跳过，不用默认值。
-- 回访状态：`data/chat-state.json` version 2；离线/暂停/发送失败按 5 分钟重试，不设过期；到期结合实际上下文生成短消息，走同一打字延迟/发送队列。
+- 回访状态：`data/chat-state.json` version 2；离线/暂停/发送失败按 5 分钟重试，不设过期；到期结合实际上下文生成短消息，走同一打字延迟/发送队列。闲置会话状态按 TTL/容量修剪，空闲终止与回访状态继续持久化。
 - 结束判断配置：`chatExit.enabled/idleMinutes/minConfidence/judgeModel/judgeTimeoutMs`；群聊和网页本机不生效。
 - 定时空间：`src/autonomy.js`；`data/autonomy.json` 记录 `nextAt` 和 `quietDeferred`。启动时若已过期，立即补发 1 条并记录下次时间；错过多次也只补 1 条。
 - 空间评论：`src/qzone-comments.js` + `src/qzone-web.js`；只处理自己说说和明确 @ 的空间链接。顶层评论和楼中楼都从 `emotion_cgi_msglist_v6` 的 `commentlist[].list_3[]` 获取；楼中楼用子评论 `tid` 直接走 `emotion_cgi_re_feeds` 回复。自己的说说在 Alice 参与过的线程有新楼中楼时回复，外部 @ 只发一条顶层评论并跟踪对 Alice 评论的新回复。
@@ -88,9 +89,9 @@ Windows 启动顺序：先 `start-onebot.bat`，再 `start.bat`。控制台令�
 - 自动记忆：`src/memory.js` 在回复成功后异步判断并保存，失败不影响回复；明确“记住”请求直接保存。
 - 记忆配置：`memory.enabled`、`autoExtract`、`minImportance`、`maxPerKey`、`maxInjected`、`judgeModel`、`judgeTimeoutMs`。
 - 记忆注入顺序：重要度降序 → 最近访问 → 创建时间，之后截取 `maxInjected`。
-- 回忆搜索：`recall` 工具由 `src/search.js`、`src/store.js` 和 `src/adapters/onebot.js` 协作；先搜当前范围长期记忆，再搜当前会话本地最近 80 条，OneBot 再按页拉取最近 7 天历史；私人往事仍无结果时要求 AI 如实说忘记，不编造。
+- 回忆搜索：`recall` 工具由 `src/search.js`、`src/store.js` 和 `src/adapters/onebot.js` 协作；先搜当前范围长期记忆，再搜当前会话本地最近 80 条，OneBot 再按页拉取。群聊默认 24 小时、可在 Web 调整为 1..168 小时；私聊固定 7 天。群历史结果保留 `speakerId`；私人往事仍无结果时要求 AI 如实说忘记，不编造。
 - 联网搜索：`src/web-search.js` 调用 DeepSeek `/v1/tools/search` 和 `/v1/tools/fetch`；`webSearch.apiKey` 优先，留空复用 `ai.apiKey`；`src/engine.js` 提供 `web_search` / `web_fetch` 工具。
-- 联网规则：私聊/本地由 AI 按需判断，闲聊不搜索；群聊只有用户明确说“搜一下/查一下”等才允许，运行时也拦截；默认每轮最多 4 次联网、6 次工具调用；搜索结果不写入历史。
+- 联网规则：私聊和显式群聊对话由 AI 按需判断，闲聊不搜索；普通非 @ 群聊候选固定 `tools=[]` 并受每小时预算限制；默认每轮最多 4 次联网、6 次工具调用；搜索结果不写入历史。
 - 搜索兜底：本地记忆未命中时，私人往事直接说忘记；公开知识/实时信息改用 `web_search`，网上也没有再如实说不知道。
 - 搜索体验：搜索期间保持“正在输入”（仅 OneBot 私聊），不发送“我搜一下/稍等”等过程消息，拿到结果后才生成最终答复。
 - 搜索配置：`webSearch.enabled`（总开关）、`searchEnabled`、`fetchEnabled`、`apiKey`、`maxResults`、`maxContentChars`、`maxCallsPerTurn`，以及顶层 `maxToolCallsPerTurn`；默认开启、5 条、6000 字、4 次联网、6 次工具。

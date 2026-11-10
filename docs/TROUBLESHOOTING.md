@@ -276,7 +276,7 @@ Client network socket disconnected before secure TLS connection was established
 - 查看终端是否有“消息批次处理失败”或 AI 取消相关错误。
 - 如果仍然只回一条，检查 `data/store.json` 对应会话最后几条：正常应是一条合并后的 `user` 加一条 `assistant`，不应出现未发送的 assistant 草稿。
 - 历史写入发生在发送边界；如果进程在提交后、真正发出前退出，历史可能多一条未送达回复。重启后不要把旧草稿补写回去。
-- 修改 `src/message-batcher.js` 的静默时间后需要重启 Alice。
+- Web 设置中的 `inputDelayMs` 保存后会热更新后续批次；只有修改 `src/message-batcher.js` 的代码后才需要重启 Alice。
 
 ## 分段消息顺序异常或只收到第一段
 
@@ -330,8 +330,8 @@ Client network socket disconnected before secure TLS connection was established
 
 ## 自然群聊一直不主动说话
 
-- 检查 `groupChat.enabled`、全局 `defaultMode`、每群 `modes`、暂停、演示模式、AI Key、安静时段、每小时预算和退场冷却。
-- 主动候选需要有效的群总人数。检查 NapCat 是否支持 `get_group_info` 并返回 `member_count`；读取失败时会跳过本次主动候选，明确 @ 和当前人格名回复不受影响。
+- 检查 Web 中的群聊总开关、`groupChat.allowUnprompted`、`activityLevel`、暂停、演示模式、AI Key、安静时段、三类每小时预算和退场冷却。`defaultMode/modes` 只是旧配置兼容字段。
+- 主动候选需要足够的近期群现场。消息和不同发言人数越少，本地评分越难过关；这是保守设计，不代表 OneBot 连接有误。明确 @、当前人格名和引用 bot 仍会进入回复。
 - 面向全群的泛问（例如“有人玩过这个吗”）、明确 @ 其他成员、引用其他成员和群内连续多人对话会保守跳过。
 - 群越热闹，主动阈值越高。先确认 `test/group-chat.test.js` 和适配器测试通过，再在目标 NapCat 版本观察实际群消息。
 
@@ -357,7 +357,7 @@ Client network socket disconnected before secure TLS connection was established
 
 - `recall` 只搜索当前记忆范围和当前会话，不会跨私聊、群聊或用户。
 - 关键词是否太宽/太偏；工具会做中文二元组匹配，不做语义搜索。
-- 本地每个会话只保留最近 80 条；OneBot 会再拉取最近 7 天，但依赖 QQ/NapCat 本地缓存，失败按未找到处理。
+- 本地每个会话只保留最近 80 条；OneBot 群聊默认再搜索最近 24 小时（可在 Web 调整为 1..168 小时），私聊固定搜索最近 7 天，均依赖 QQ/NapCat 本地缓存，失败按未找到处理。
 - 如果 `recall` 返回 `found: false`，私人往事应直接承认忘记；公开知识或实时信息应改用 `web_search`，网上也没有再承认不知道。若仍然编造，检查 `src/engine.js` 的系统提示词是否被改动。
 - 远程历史拉取失败时查看终端是否有“聊天记录搜索失败，按未找到处理”的警告；不影响正常回复。
 

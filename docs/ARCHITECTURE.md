@@ -50,7 +50,7 @@ src/server.js ──> src/engine.js ──> src/ai.js
 | `src/follow-up.js` | 回访到期检查、上下文生成、夜间顺延、失败重试、发送、重复空闲时由 AI 决定延长。 |
 | `src/delivery.js` | 按回复字数计算延迟、纯表情包豁免、按会话独立发送队列。 |
 | `src/message-batcher.js` | 连续消息合并、输入前静默、批次打断、发送边界和 generation token。 |
-| `src/group-chat.js` | OneBot 群现场、多人/引用对象、本地候选、人数等待、预算、冷却、沉默/表情动作与哈希化状态。 |
+| `src/group-chat.js` | OneBot 群现场、多人/引用对象、本地候选、活动窗口等待、预算、冷却、沉默/表情动作与哈希化状态。 |
 | `src/group-preferences.js` | 把当前用户私聊 `preference` 记忆映射为固定宽泛兴趣类别；不返回原文。 |
 | `src/typing.js` | OneBot 私聊“正在输入”的按会话计数、续期、退避与清理；群聊/官方 QQ/本机跳过。 |
 | `src/search.js` | 关键词归一化、中文二元组匹配、匹配打分和排序；供记忆与聊天记录搜索共用。 |
@@ -71,7 +71,7 @@ src/server.js ──> src/engine.js ──> src/ai.js
 
 ## 配置访问
 
-运行时使用同步配置快照 `getConfig()`。适配器同步读取开关；AI、空间、表情库通过 `await` 也能读取同一快照。保存配置后替换快照；AI、策略和表情设置通常立即生效，QQ/OneBot 传输参数需要重连。
+运行时使用同步配置快照 `getConfig()`。适配器同步读取开关；AI、空间、表情库通过 `await` 也能读取同一快照。Web 保存后替换快照，并热更新消息合并等待、人格和群聊候选；QQ/OneBot 传输参数通常仍需要重连。
 
 直接编辑 `data/config.json` 不会通知运行中的进程，需要重启 Alice。
 
@@ -112,14 +112,14 @@ src/server.js ──> src/engine.js ──> src/ai.js
 
 - `OneBotAdapter` 把未 @ 群消息也交给上层，并携带 `mentionIds/quotedMessageId/quotedSelf`。适配器对 bot 自己发送的群消息 ID 保留最多 1000 个，用于识别引用；自身、其他 bot、暂停和允许名单仍在进入管理器前过滤。
 - `GroupChatManager` 按群保留最多 `sceneMessages` 条约 `sceneWindowMinutes` 分钟的一次性现场。成员只显示稳定于当前进程的临时别名；消息历史、私聊或其他群不会拼进现场。现场不持久化。
-- 模式优先级是每群 `modes[groupId]` > `defaultMode`。明确召唤不服从模式、主动等待、主动预算或冷却；非点名候选只在非 `mention` 模式运行。
+- Web 主设置是 `groupChat.enabled`、`allowUnprompted` 和 `activityLevel`。旧 `modes[groupId]` / `defaultMode` 字段仅为兼容既有配置；明确召唤不受自然参与等待、主动预算或冷却影响。
 - 明确召唤进入原回复流水线后、正式消息尚未发送时，同一成员的非 @ 续句返回 `pending_continuation` 并继续交给原 `MessageBatcher`，从而合并或打断原批次；不会创建独立群候选。
 - 候选分数全部本地计算：实质问题、相邻话题、相关群记忆、当前发送者安全关系、群长期熟悉度和 Alice 稳定喜好/观点加分；近期消息量与不同发言人数减分。面向全群的泛问直接排除。普通问题还必须有话题、群记忆、兴趣、关系或已学习群互动中的至少一项支撑，问题文本本身不能独立成为候选。
-- 主动候选取得群总人数后等待 `proactiveWaitBaseMs + memberCount × proactiveWaitPerMemberMs`。`get_group_info` 结果在适配器内按小时缓存；人数缺失返回空结果并跳过本次，不用 0 代替。
+- 主动候选从 `proactiveWaitBaseMs` 起算，按 `activityWindowSeconds` 内消息量、不同发言人数和 `activityLevel` 调整等待；不再按群总人数叠加固定秒数。
 - 等待或生成中出现 @ 其他成员、换引用对象或接走候选话题时，控制器取消；无关闲聊不重置等待。`onBeforeSend` 再检查候选代次，防止生成后的旧草稿发出。
 - 每群每小时非点名预算和哈希化冷却状态保存在 `data/group-chat.json`。模型调用前记账，因此取消、失败和最终沉默也占用；显式召唤不占该预算。冷却由连续回复上限或无人接话触发，显式回复只可越过冷却，不改变冷却截止时间。无人接话计时只在引用/点名 bot，或 Alice 刚回复的同一成员接话时清除；其他人的无关热聊不会暂停该退出计时。
-- 已明确参与后的同一成员在短窗口内无 @ 续聊可跳过人数等待；其他成员先插入时本地判定为多人对话，Alice 退让。冷却结束后只由新消息重新形成候选，不回放旧现场。
-- 非点名 Engine 回合禁用工具、回复审校和额外自动记忆判断，用一次关闭思考、500 token 上限的 JSON 结果选择短文本、QQ 表情、本地表情或沉默。回复标记为 transient，不写正常群历史；群管理器只把实际回复加入短期现场。明确请求保持原有工具、审校、历史和记忆路径。
+- 已明确参与后的同一成员在短窗口内无 @ 续聊可跳过主动候选等待；其他成员先插入时本地判定为多人对话，Alice 退让。冷却结束后只由新消息重新形成候选，不回放旧现场。
+- 非点名 Engine 回合禁用工具、回复审校和额外自动记忆判断，用一次关闭思考、500 token 上限的 JSON 结果选择短文本、QQ 表情、本地表情或沉默。回复标记为 transient，不写正常群历史；群管理器只把实际回复加入短期现场。明确进入回复链路的群消息保持原有工具、审校、历史和群长期记忆路径，历史条目带 `speakerId` 和消息时间，后续注入保留说话人归属。
 - 群聊可读取当前发送者自己的私聊 `preference` 记忆，但只映射到固定宽泛兴趣类别，并只在当前群话题命中同类词时注入类别名。原记忆文字、具体作品/商品、地点、事件、情绪和其他成员数据都不进入提示词。
 
 ### 短期状态、审校与拟人情绪
@@ -162,12 +162,12 @@ src/server.js ──> src/engine.js ──> src/ai.js
 - `source=auto` 的顺序固定：当前范围全部长期记忆 → 当前会话本地最近 80 条 → OneBot 按需拉取 NapCat 历史。
 - 长期记忆搜索不受 `maxInjected` 限制，会搜索当前记忆库全部条目；结果按匹配度、重要度、最近访问排序。
 - 本地聊天记录搜索只读当前会话的 `user`/`assistant` 文本，不跨私聊、群聊或身份绑定。
-- OneBot 远程历史按页拉取，每页 100 条，不设总条数上限；只保留最近 7 天，超出后停止。会尝试相反分页方向，遇到重复/无更早记录即停止。
+- OneBot 远程历史按页拉取，每页 100 条；群聊默认只取最近 24 小时，可在 Web 调整为 1..168 小时，私聊固定最近 7 天。会尝试相反分页方向，遇到重复、无更早记录或超出窗口即停止。
 - 远程历史使用 `get_friend_msg_history` / `get_group_msg_history`，关闭图片 URL 和合并消息解析；失败按未找到处理。
 - 本地未命中时：私人往事直接承认真忘；公开知识、实时信息或模型确实不会的问题改用 `web_search`。
 - `web_search` 调 DeepSeek `POST /v1/tools/search`，只返回标题、URL、站点、日期、分数、权威性和摘要；摘要不够时再调 `web_fetch` 抓正文。
 - `webSearch.enabled` 是总开关；`searchEnabled` 和 `fetchEnabled` 分别控制两个工具，运行时还会再次检查。
-- 群聊只有用户消息命中明确搜索词（搜一下/查一下/搜索/上网查等）才允许联网，Engine 在运行时再次拦截。
+- 私聊和显式群聊对话按同一规则与当前联网配置按需搜索；普通非 @ 群聊候选固定不提供工具，并继续受每小时模型预算限制。
 - 联网失败或没有结果时返回结构化错误/空结果，要求模型如实说不知道，不编造；默认每轮最多 4 次联网、6 次工具调用，均可在 Web 调整，联网上限不会超过工具上限。
 - 搜索期间 OneBot 私聊的“正在输入”由 `src/typing.js` 持续续期；引擎只在工具轮次结束后生成并发送最终答复，不发送搜索过程文字。
 
@@ -242,7 +242,7 @@ src/server.js ──> src/engine.js ──> src/ai.js
 ## 连续消息合并与打断
 
 - 仅 OneBot 和官方 QQ 进入 `MessageBatcher`；本机网页保持即时处理。
-- 每个会话按 `channel + scope + conversationId + userId` 维护 `collecting / generating / delaying / sending` 状态；群聊不同用户不会合并，最后一条消息后等待 `inputDelayMs`（默认 2000ms）再合并。
+- 每个会话按 `channel + scope + conversationId + userId` 维护 `collecting / generating / delaying / sending` 状态；群聊不同用户不会合并，最后一条消息后等待 `inputDelayMs`（默认 2000ms）再合并。Web 保存后，正在进行的批次保留原窗口，后续批次使用热更新值。
 - 静默期内新消息重置计时；生成、delay 期间新消息通过 `AbortController` 中断当前轮。
 - 明显未完句会增加最多 1 秒语义等待（至少 300ms 或基础静默的一半，且不超过 1 秒）；明确问句维持原静默期。
 - 生成期的纯 ACK 只进入补充列表；controller 已 abort 后到达的 ACK 留在 pending，不能越过引发中断的实质消息。handler 完成时清理未提交补充，避免漏到下一轮。

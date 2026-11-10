@@ -12,6 +12,8 @@ import { QQAdapter } from "../src/adapters/qq.js";
 import { defaultConfig } from "../src/config.js";
 import {
   createConfigController,
+  createRuntimeConfigController,
+  enforceBasicMode,
   createQzoneToolPublisher,
 } from "../src/index.js";
 import { createWebServer, listenLocal } from "../src/server.js";
@@ -38,11 +40,12 @@ async function fixture(t, options = {}) {
   );
   await writeFile(path.join(root, "THIRD_PARTY_LICENSES.md"), "Third-party marker\n");
 
-  let config = structuredClone(defaultConfig);
-  config.ai.apiKey = "ai-secret";
-  config.qq.secret = "qq-secret";
-  config.onebot.token = "onebot-secret";
-  config.webSearch.apiKey = "web-search-secret";
+  let storedConfig = structuredClone(options.config ?? defaultConfig);
+  storedConfig.ai.apiKey = "ai-secret";
+  storedConfig.qq.secret = "qq-secret";
+  storedConfig.onebot.token = "onebot-secret";
+  storedConfig.webSearch.apiKey = "web-search-secret";
+  let config = options.basicMode ? enforceBasicMode(storedConfig) : storedConfig;
 
   const memoriesByKey = new Map();
   const memoryKeys = [];
@@ -144,16 +147,20 @@ async function fixture(t, options = {}) {
 
   const server = createWebServer({
     root,
+    basicMode: options.basicMode,
     publicDir,
     token: "test-console-token-1234567890",
     getConfig: () => config,
+    getRuntimeMode: options.getRuntimeMode,
+    getStoredConfig: () => storedConfig,
     saveConfig: async (_root, patch) => {
-      config = {
-        ...config,
+      storedConfig = {
+        ...storedConfig,
         ...patch,
-        ai: { ...config.ai, ...(patch.ai ?? {}) },
-        policy: { ...config.policy, ...(patch.policy ?? {}) },
+        ai: { ...storedConfig.ai, ...(patch.ai ?? {}) },
+        policy: { ...storedConfig.policy, ...(patch.policy ?? {}) },
       };
+      config = options.basicMode ? enforceBasicMode(storedConfig) : storedConfig;
       return config;
     },
     store,
@@ -260,6 +267,107 @@ test("config and status responses never expose secrets", async (t) => {
   assert.doesNotMatch(statusBody, /must-not-leak/);
 });
 
+test("runtime capabilities are full by default, basic when requested, and read-only", async (t) => {
+  const fullApp = await fixture(t);
+  const fullConfig = await (
+    await fetch(`${fullApp.base}/api/config`, { headers: auth(fullApp.token) })
+  ).json();
+  const fullStatus = await (
+    await fetch(`${fullApp.base}/api/status`, { headers: auth(fullApp.token) })
+  ).json();
+  const fullCapabilities = {
+    basicMode: false,
+    space: true,
+    stickers: true,
+    proactivePrivateMessages: true,
+    review: true,
+    userUnderstanding: true,
+    externalActions: true,
+  };
+  assert.deepEqual(fullConfig.runtimeCapabilities, fullCapabilities);
+  assert.deepEqual(fullStatus.runtimeCapabilities, fullCapabilities);
+  assert.equal(fullConfig.runtimeMode, "auto");
+  assert.deepEqual(fullConfig.runtimeModeInfo, { mode: "full", source: "runtime" });
+  assert.deepEqual(fullStatus.runtimeModeInfo, { mode: "full", source: "runtime" });
+
+  const basicApp = await fixture(t, { basicMode: true });
+  const basicConfig = await (
+    await fetch(`${basicApp.base}/api/config`, { headers: auth(basicApp.token) })
+  ).json();
+  const basicStatus = await (
+    await fetch(`${basicApp.base}/api/status`, { headers: auth(basicApp.token) })
+  ).json();
+  const basicCapabilities = {
+    basicMode: true,
+    space: false,
+    stickers: false,
+    proactivePrivateMessages: false,
+    review: false,
+    userUnderstanding: false,
+    externalActions: false,
+  };
+  assert.deepEqual(basicConfig.runtimeCapabilities, basicCapabilities);
+  assert.deepEqual(basicStatus.runtimeCapabilities, basicCapabilities);
+  assert.equal(basicConfig.runtimeMode, "auto");
+  assert.deepEqual(basicConfig.runtimeModeInfo, { mode: "basic", source: "runtime" });
+  assert.deepEqual(basicStatus.runtimeModeInfo, { mode: "basic", source: "runtime" });
+
+  const storedQzone = await fetch(`${basicApp.base}/api/config`, {
+    method: "POST",
+    headers: { ...auth(basicApp.token), "content-type": "application/json" },
+    body: JSON.stringify({ qzone: { enabled: true } }),
+  });
+  assert.equal(storedQzone.status, 200);
+  const storedQzonePayload = await storedQzone.json();
+  assert.equal(storedQzonePayload.config.qzone.enabled, true);
+  assert.equal(storedQzonePayload.config.runtimeMode, "auto");
+  assert.deepEqual(storedQzonePayload.runtimeModeInfo, {
+    mode: "basic",
+    source: "runtime",
+  });
+  assert.equal(basicApp.getConfig().qzone.enabled, false);
+
+  const reloadedBasicConfig = await (
+    await fetch(`${basicApp.base}/api/config`, { headers: auth(basicApp.token) })
+  ).json();
+  assert.equal(reloadedBasicConfig.qzone.enabled, true);
+  assert.deepEqual(reloadedBasicConfig.runtimeCapabilities, basicCapabilities);
+
+  const saved = await fetch(`${basicApp.base}/api/config`, {
+    method: "POST",
+    headers: { ...auth(basicApp.token), "content-type": "application/json" },
+    body: JSON.stringify({
+      basicMode: false,
+      runtimeModeInfo: { mode: "full", source: "config" },
+      runtimeCapabilities: fullCapabilities,
+      inputDelayMs: 2300,
+    }),
+  });
+  assert.equal(saved.status, 200);
+  const savedPayload = await saved.json();
+  assert.equal(savedPayload.config.inputDelayMs, 2300);
+  assert.equal(Object.hasOwn(savedPayload.config, "runtimeCapabilities"), false);
+  assert.equal(Object.hasOwn(savedPayload.config, "runtimeModeInfo"), false);
+  assert.equal(Object.hasOwn(basicApp.getConfig(), "runtimeCapabilities"), false);
+  assert.equal(Object.hasOwn(basicApp.getConfig(), "basicMode"), false);
+});
+
+test("server runtime capabilities follow the current mode without rebuilding the server", async (t) => {
+  let runtimeMode = { mode: "basic", source: "config" };
+  const app = await fixture(t, { getRuntimeMode: () => runtimeMode });
+  const readStatus = async () =>
+    await (await fetch(`${app.base}/api/status`, { headers: auth(app.token) })).json();
+
+  const basicStatus = await readStatus();
+  assert.equal(basicStatus.runtimeModeInfo.mode, "basic");
+  assert.equal(basicStatus.runtimeCapabilities.space, false);
+
+  runtimeMode = { mode: "full", source: "config" };
+  const fullStatus = await readStatus();
+  assert.equal(fullStatus.runtimeModeInfo.mode, "full");
+  assert.equal(fullStatus.runtimeCapabilities.space, true);
+});
+
 test("QZone comments status and manual poll endpoints are available", async (t) => {
   let polled = 0;
   const app = await fixture(t, {
@@ -305,11 +413,20 @@ test("config API accepts sticker and idle termination settings", async (t) => {
     body: JSON.stringify({
       inputDelayMs: 2500,
       maxToolCallsPerTurn: 7,
+      ai: {
+        ...defaultConfig.ai,
+        historyMessages: 12,
+      },
       groupChat: {
         ...defaultConfig.groupChat,
-        defaultMode: "active",
-        modes: { "123456": "mention" },
+        enabled: true,
+        allowUnprompted: false,
+        activityLevel: "high",
+        continuationWindowMinutes: 7,
         budgetPerHour: 4,
+        continuationBudgetPerHour: 9,
+        totalBudgetPerHour: 15,
+        historySearchHours: 48,
       },
       stickers: { ...defaultConfig.stickers, proactiveCooldownMinutes: 9 },
       chatExit: { ...defaultConfig.chatExit, idleMinutes: 15 },
@@ -332,9 +449,15 @@ test("config API accepts sticker and idle termination settings", async (t) => {
   const payload = await response.json();
   assert.equal(payload.config.inputDelayMs, 2500);
   assert.equal(payload.config.maxToolCallsPerTurn, 7);
-  assert.equal(payload.config.groupChat.defaultMode, "active");
-  assert.deepEqual(payload.config.groupChat.modes, { "123456": "mention" });
+  assert.equal(payload.config.ai.historyMessages, 12);
+  assert.equal(payload.config.groupChat.enabled, true);
+  assert.equal(payload.config.groupChat.allowUnprompted, false);
+  assert.equal(payload.config.groupChat.activityLevel, "high");
+  assert.equal(payload.config.groupChat.continuationWindowMinutes, 7);
   assert.equal(payload.config.groupChat.budgetPerHour, 4);
+  assert.equal(payload.config.groupChat.continuationBudgetPerHour, 9);
+  assert.equal(payload.config.groupChat.totalBudgetPerHour, 15);
+  assert.equal(payload.config.groupChat.historySearchHours, 48);
   assert.equal(payload.config.stickers.proactiveCooldownMinutes, 9);
   assert.equal(payload.config.chatExit.idleMinutes, 15);
   assert.equal(payload.config.webSearch.searchEnabled, false);
@@ -689,6 +812,19 @@ test("sticker library API lists, serves, uploads, and deletes", async (t) => {
   const uploadBody = await upload.json();
   assert.equal(uploadBody.item.id, "st_2");
 
+  const largeImage = Buffer.alloc(6 * 1024 * 1024, 0x89);
+  const largeUpload = await fetch(`${app.base}/api/stickers/upload`, {
+    method: "POST",
+    headers: { ...auth(app.token), "content-type": "application/json" },
+    body: JSON.stringify({
+      fileName: "large.png",
+      data: `data:image/png;base64,${largeImage.toString("base64")}`,
+      tags: ["可爱"],
+    }),
+  });
+  assert.equal(largeUpload.status, 201);
+  assert.equal(uploadedBytes, largeImage.length);
+
   const missingTags = await fetch(`${app.base}/api/stickers/upload`, {
     method: "POST",
     headers: { ...auth(app.token), "content-type": "application/json" },
@@ -810,6 +946,41 @@ test("invalid source URL fails closed for both legal web routes", async (t) => {
     assert.equal(response.status, 503);
     assert.equal((await response.json()).code, "SOURCE_URL_INVALID");
   }
+});
+
+test("runtime mode switches between stored and effective config without losing enabled values", () => {
+  const stored = structuredClone(defaultConfig);
+  stored.runtimeMode = "basic";
+  stored.qzone.enabled = true;
+  stored.autonomy.enabled = true;
+  const runtime = createRuntimeConfigController(stored, {
+    env: { ALICE_RUNTIME_MODE: "full" },
+  });
+
+  assert.deepEqual(runtime.getRuntimeMode(), { mode: "basic", source: "config" });
+  assert.equal(runtime.getConfig().qzone.enabled, false);
+  assert.equal(runtime.getConfig().autonomy.enabled, false);
+
+  const fullStored = { ...stored, runtimeMode: "full" };
+  runtime.setStoredConfig(fullStored);
+  assert.deepEqual(runtime.getRuntimeMode(), { mode: "full", source: "config" });
+  assert.equal(runtime.getConfig().qzone.enabled, true);
+  assert.equal(runtime.getConfig().autonomy.enabled, true);
+
+  const basicStored = { ...fullStored, runtimeMode: "basic" };
+  runtime.setStoredConfig(basicStored);
+  assert.equal(runtime.getConfig().qzone.enabled, false);
+  assert.equal(basicStored.qzone.enabled, true);
+  assert.equal(basicStored.autonomy.enabled, true);
+
+  const automatic = { ...stored, runtimeMode: "auto" };
+  const environmentRuntime = createRuntimeConfigController(automatic, {
+    env: { ALICE_RUNTIME_MODE: "full" },
+  });
+  assert.deepEqual(environmentRuntime.getRuntimeMode(), {
+    mode: "full",
+    source: "environment",
+  });
 });
 
 test("runtime config accessor is synchronous so adapters become enabled", () => {

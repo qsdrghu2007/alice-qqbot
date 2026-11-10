@@ -68,12 +68,23 @@ async function dueScheduler(t, configOverrides = {}, dependencies = {}) {
   const config = makeConfig(configOverrides);
   let chatCalls = 0;
   let publishCalls = 0;
+  let publishOptions = null;
+  let recentPostCalls = 0;
+  let recentPostOptions = null;
   const autonomy = new Autonomy({
     root,
     getConfig: () => config,
     qzone: {
+      async recentPosts(options) {
+        recentPostCalls += 1;
+        recentPostOptions = options;
+        return dependencies.recentPosts
+          ? dependencies.recentPosts(options)
+          : [];
+      },
       async publish(text, options) {
         publishCalls += 1;
+        publishOptions = options;
         return dependencies.publish
           ? dependencies.publish(text, options)
           : { status: "sent", providerId: "tid-1" };
@@ -83,7 +94,10 @@ async function dueScheduler(t, configOverrides = {}, dependencies = {}) {
       chatCalls += 1;
       return dependencies.chat
         ? dependencies.chat(request)
-        : { content: "今天窗外很安静。", toolCalls: [] };
+        : {
+            content: JSON.stringify({ publish: true, text: "今天窗外很安静。" }),
+            toolCalls: [],
+          };
     },
     weather: dependencies.weather ?? (async () => ({
       description: "多云",
@@ -108,6 +122,9 @@ async function dueScheduler(t, configOverrides = {}, dependencies = {}) {
     },
     chatCalls: () => chatCalls,
     publishCalls: () => publishCalls,
+    publishOptions: () => publishOptions,
+    recentPostCalls: () => recentPostCalls,
+    recentPostOptions: () => recentPostOptions,
   };
 }
 
@@ -131,7 +148,7 @@ test("an overdue startup deadline posts one catch-up immediately and records the
     chat: async (request) => {
       chatCalls += 1;
       chatRequest = request;
-      return { content: "补一条。" };
+      return { content: JSON.stringify({ publish: true, text: "补一条。" }) };
     },
     weather: async () => ({
       description: "多云",
@@ -170,7 +187,7 @@ test("normal quiet-hour due defers across restart and only posts after quiet end
     },
     chat: async () => {
       chatCalls += 1;
-      return { content: "早上好。" };
+      return { content: JSON.stringify({ publish: true, text: "早上好。" }) };
     },
     weather: async () => ({
       description: "晴",
@@ -250,13 +267,20 @@ test("due schedule persists the next slot before text-only generation", async (t
   let stateRoot;
   let chatRequest;
   const fixture = await dueScheduler(t, {}, {
+    recentPosts: async () => [
+      { text: "上次已经发过的雨天内容", ugc_right: 1, target_uins: [] },
+      { text: "昨天分享的一杯橘子汽水", ugc_right: 4, target_uins: [] },
+    ],
     chat: async (request) => {
       chatRequest = request;
       const state = JSON.parse(
         await readFile(path.join(stateRoot, "data", "autonomy.json"), "utf8"),
       );
       persistedBeforeChat = state.nextAt;
-      return { content: "一条自然、简短的动态。", toolCalls: [{ name: "ignored" }] };
+      return {
+        content: JSON.stringify({ publish: true, text: "一条自然、简短的动态。" }),
+        toolCalls: [{ name: "ignored" }],
+      };
     },
   });
   stateRoot = fixture.root;
@@ -268,13 +292,131 @@ test("due schedule persists the next slot before text-only generation", async (t
   assert.equal(fixture.publishCalls(), 1);
   assert.ok(new Date(persistedBeforeChat).getTime() > START.getTime() + 60 * 60_000);
   assert.equal(chatRequest.messages[0].role, "system");
-  assert.match(chatRequest.messages[0].content, /你的名字是Alice/);
+  assert.match(chatRequest.messages[0].content, /当前人格名称是“Alice”/);
   assert.match(chatRequest.messages[0].content, /当前时间：2026-10-19 13:00/);
   assert.match(chatRequest.messages[0].content, /南京当前天气：多云，气温 20°C/);
-  assert.match(chatRequest.messages[0].content, /不要机械复述/);
+  assert.match(chatRequest.messages[0].content, /不要为了固定问候或时段机械发帖/);
+  assert.match(chatRequest.messages[0].content, /上次已经发过的雨天内容/);
+  assert.match(chatRequest.messages[0].content, /\[公开\]/);
+  assert.match(chatRequest.messages[0].content, /\[好友\]/);
+  assert.match(chatRequest.messages[0].content, /你的稳定喜好/);
+  assert.equal(fixture.recentPostCalls(), 1);
+  assert.deepEqual(fixture.recentPostOptions(), {
+    limit: 5,
+    ugc_right: 4,
+    target_uins: [],
+  });
   assert.equal(chatRequest.messages[1].role, "user");
   assert.equal(chatRequest.tools, undefined);
   assert.equal(fixture.autonomy.status().lastStatus, "sent");
+  assert.equal(fixture.publishOptions().autonomous, true);
+  assert.equal(fixture.publishOptions().ugc_right, 4);
+  assert.deepEqual(fixture.publishOptions().target_uins, []);
+  await fixture.autonomy.stop();
+});
+
+test("materials follow the planned scope and publishing keeps its snapshot", async (t) => {
+  let fixture;
+  let chatRequest;
+  fixture = await dueScheduler(
+    t,
+    {
+      qzone: {
+        ugc_right: 16,
+        target_uins: ["111111", "222222"],
+      },
+    },
+    {
+      recentPosts: async () => [
+        { text: "公开素材", ugc_right: 1, target_uins: [] },
+        { text: "好友素材", ugc_right: 4, target_uins: [] },
+        { text: "自己素材", ugc_right: 64, target_uins: [] },
+        {
+          text: "同范围素材",
+          ugc_right: 16,
+          target_uins: ["222222", "111111"],
+        },
+        {
+          text: "不同目标素材",
+          ugc_right: 16,
+          target_uins: ["111111", "333333"],
+        },
+        { text: "旧记录缺范围" },
+      ],
+      chat: async (request) => {
+        chatRequest = request;
+        const system = request.messages[0].content;
+        assert.match(system, /本次计划发布范围：受限范围\(16\)/);
+        assert.match(system, /\[公开\] 公开素材/);
+        assert.match(system, /\[受限范围\(16\)\] 同范围素材/);
+        assert.doesNotMatch(system, /好友素材|自己素材|不同目标素材|旧记录缺范围/);
+        fixture.config.qzone.ugc_right = 1;
+        fixture.config.qzone.target_uins = [];
+        return {
+          content: JSON.stringify({ publish: true, text: "按原计划发布。" }),
+        };
+      },
+    },
+  );
+  await fixture.autonomy.start();
+  fixture.advanceToDue();
+
+  const result = await fixture.autonomy.tick();
+
+  assert.equal(result.attempted, true);
+  assert.deepEqual(fixture.recentPostOptions(), {
+    limit: 5,
+    ugc_right: 16,
+    target_uins: ["111111", "222222"],
+  });
+  assert.deepEqual(fixture.publishOptions(), {
+    images: [],
+    autonomous: true,
+    ugc_right: 16,
+    target_uins: ["111111", "222222"],
+  });
+  assert.equal(chatRequest.messages[1].role, "user");
+  await fixture.autonomy.stop();
+});
+
+test("AI can stay silent while the next interval is already persisted", async (t) => {
+  const fixture = await dueScheduler(t, {}, {
+    chat: async () => ({
+      content: JSON.stringify({ publish: false, reason: "没有自然话题" }),
+    }),
+  });
+  await fixture.autonomy.start();
+  fixture.advanceToDue();
+
+  const result = await fixture.autonomy.tick();
+
+  assert.deepEqual(result, { skipped: true, reason: "ai_silence" });
+  assert.equal(fixture.chatCalls(), 1);
+  assert.equal(fixture.publishCalls(), 0);
+  assert.equal(fixture.autonomy.status().lastStatus, "skipped");
+  assert.deepEqual(fixture.autonomy.status().lastResult, {
+    status: "skipped",
+    reason: "没有自然话题",
+  });
+  assert.ok(
+    new Date(fixture.autonomy.status().nextAt).getTime() >
+      START.getTime() + 60 * 60_000,
+  );
+  await fixture.autonomy.stop();
+});
+
+test("non-JSON control strings are rejected instead of published", async (t) => {
+  const fixture = await dueScheduler(t, {}, {
+    chat: async () => ({ content: "[不发布]" }),
+  });
+  await fixture.autonomy.start();
+  fixture.advanceToDue();
+
+  const result = await fixture.autonomy.tick();
+
+  assert.equal(result.status, "invalid_generated_text");
+  assert.equal(fixture.publishCalls(), 0);
+  assert.match(fixture.autonomy.status().lastError, /有效发布决策 JSON/);
   await fixture.autonomy.stop();
 });
 
@@ -289,7 +431,9 @@ test("weather failure still publishes with time context and no invented weather"
       },
       chat: async (request) => {
         chatRequest = request;
-        return { content: "中午啦，记得吃饭。" };
+        return {
+          content: JSON.stringify({ publish: true, text: "雨停后空气挺舒服。" }),
+        };
       },
     },
   );
@@ -323,7 +467,7 @@ test("disabling autonomy while AI is generating prevents publishing", async (t) 
   const running = fixture.autonomy.tick();
   await started;
   fixture.config.autonomy.enabled = false;
-  releaseChat({ content: "不应该发布" });
+  releaseChat({ content: JSON.stringify({ publish: true, text: "不应该发布" }) });
   const result = await running;
   assert.deepEqual(result, { skipped: true, reason: "disabled" });
   assert.equal(fixture.publishCalls(), 0);
@@ -350,7 +494,7 @@ test("stop after AI generation prevents publishing", async (t) => {
   const running = fixture.autonomy.tick();
   await started;
   const stopping = fixture.autonomy.stop();
-  releaseChat({ content: "不应被发布" });
+  releaseChat({ content: JSON.stringify({ publish: true, text: "不应被发布" }) });
   await running;
   await stopping;
   assert.equal(fixture.publishCalls(), 0);

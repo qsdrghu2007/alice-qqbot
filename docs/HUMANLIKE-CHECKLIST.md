@@ -29,17 +29,17 @@
 
 ### 群聊参与证据
 
-- `src/group-chat.js`：按群保留有界现场；候选全部本地评分；主动等待严格使用 `proactiveWaitBaseMs + 总人数 × proactiveWaitPerMemberMs`；人数缺失不发模型；对象/引用相关消息才取消；预算在调用前记账；连续发言和无人接话进入冷却。
+- `src/group-chat.js`：按群保留有界现场；候选全部本地评分；主动等待从 `proactiveWaitBaseMs` 起算，按近期消息量、不同发言人数和 `activityLevel` 调整；对象/引用相关消息才取消；普通主动与续聊预算分别记录；连续发言和无人接话进入冷却。
 - `src/adapters/onebot.js`：未 @ 群消息不再丢弃；保留 `mentionIds`、`quotedMessageId`、`quotedSelf`；`getGroupInfo()` 读取并缓存总人数。
 - `src/engine.js`：非点名群回合不提供工具，使用一次 `thinking: disabled`、500 tokens、JSON object 结果决定 `text/face/sticker/silence`；同时跳过审校、自动记忆和正常群历史提交。明确召唤继续使用原有能力。
 - 普通问题不能只靠问题结构或群熟悉度基线触发；`test/group-chat.test.js` 验证没有话题、群记忆、兴趣、关系或已学习互动时保持沉默。
 - 明确召唤发送前的同一成员非 @ 续句返回 `pending_continuation`，进入原批处理；其他成员的群热聊不会清除 Alice 的无人接话退出计时。
 - 隐私与缓存：群现场位于最后一条动态 user，固定 system 只增加静态 `GROUP_CHAT_CONTRACT`；画像仍取当前发送者安全枚举，记忆仍取当前群 key。`test/group-chat.test.js`: `group decision engine uses one model call and skips review, tools, memory extraction, and history` 同时验证公开群记忆进入提示词、私聊记忆不进入。
 - 私聊偏好记忆仅投影为固定宽泛兴趣类别，且只在当前群话题相关时注入；测试同时验证类别名存在、具体私聊作品名和原句不存在。
-- 行为边界：`test/group-chat.test.js` 覆盖动态人格名、人数公式与缺失、公开记忆候选、泛问排除、忙碌抑制、相关消息取消、明确对话中让位/本人续聊、冷却与沉默预算；`test/adapters.test.js` 覆盖未 @ 上报、引用 bot 和人数缓存。
-- 真实限制：本地测试不能证明 NapCat 各版本都提供相同引用字段，也不能证明真实模型每次都正确选择沉默。群人数缓存、模型结构化 JSON 和短期现场均为保守近似。
+- 行为边界：`test/group-chat.test.js` 覆盖动态人格名、活动窗口等待、公开记忆候选、泛问排除、忙碌抑制、相关消息取消、明确对话中让位/本人续聊、冷却与沉默预算；`test/adapters.test.js` 覆盖未 @ 上报和引用 bot。
+- 真实限制：本地测试不能证明 NapCat 各版本都提供相同引用字段，也不能证明真实模型每次都正确选择沉默。模型结构化 JSON 和短期现场均为保守近似。
 
-历史运行证据（群聊扩展前）：发布目录全量 `npm test` 330/330 通过，最终许可、回复流和服务器定向测试 26/26 通过；同哈希代码同步到 mirror 后，定向测试再次 26/26 通过，`npm run check` 和 `node --check public/app.js` 通过。mirror Alice 已用 v0.3.0 代码重启并监听 `127.0.0.1:3210`；`/source` 以 302 指向 `https://github.com/qsdrghu2007/alice-qqbot/tree/v0.3.0`，`/license` 返回 200 且包含 AGPL、Community Exception、版权和无担保内容。NapCat 保持在 `6099`，`3001` 无监听，本轮没有发送 QQ 消息，因此真实 QQ E2E 仍未验证。另用固定简短虚构人设、当前 `STYLE_CONTRACT` 和 7 条原创对话做了一次不经过 QQ 的人工回放；短扮演多回倒计时，自然边界首次和新 style 单例重跑都只做到不伪造执行，没有优先自然说不想接。单例结果如实记为未达到目标，没有继续重试；回放不是全真实配置 E2E，也不自动判定通过。
+v0.6.0 发布目录验证：全量 `npm test` 384/384 通过（0 跳过、0 失败），`npm run check` 和 `node --check public/app.js` 通过；候选文件检查未包含运行数据、NapCat、依赖、备份或已检查的常见凭证格式。该结果只证明自动化代码路径和静态约束；本轮没有使用真实 QQ 账号和真实模型完成端到端验收，因此 NapCat 版本差异、QQ 风控、网页版空间协议和真实模型语气仍需上线后小范围观察。
 
 ## 验证命令
 

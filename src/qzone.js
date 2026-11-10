@@ -7,6 +7,13 @@ import path from 'node:path';
 const OUTBOX_FILE = path.join('data', 'qzone-outbox.json');
 const ACTIVE_STATES = new Set(['sending', 'unknown', 'sent']);
 const VALID_UGC_RIGHTS = new Set([1, 4, 16, 64, 128]);
+const VISIBILITY_LABELS = Object.freeze({
+  1: '公开',
+  4: '好友',
+  16: '受限范围(16)',
+  64: '仅自己',
+  128: '受限范围(128)',
+});
 
 function normalizeForComparison(value) {
   return String(value ?? '')
@@ -93,7 +100,7 @@ function mergeConfig(raw = {}) {
   };
 }
 
-function policyBlockReason(config) {
+function policyBlockReason(config, { autonomous = false } = {}) {
   if (!config.qzone.enabled) {
     return 'qzone_disabled';
   }
@@ -106,7 +113,7 @@ function policyBlockReason(config) {
   if (config.policy.paused) {
     return 'policy_paused';
   }
-  if (!config.qzone.autoPublish) {
+  if (autonomous && !config.qzone.autoPublish) {
     return 'auto_publish_disabled';
   }
   return null;
@@ -141,6 +148,52 @@ function normalizeTargetUins(value) {
   });
 }
 
+export function qzoneVisibilityLabel(value) {
+  return VISIBILITY_LABELS[Number(value)] ?? '未知范围';
+}
+
+function normalizedTargetSet(value) {
+  try {
+    return new Set(normalizeTargetUins(value));
+  } catch {
+    return null;
+  }
+}
+
+export function isRecentPostVisibleToTarget(
+  post,
+  { ugc_right: targetRightRaw, target_uins: targetUins } = {},
+) {
+  const sourceRight = Number(post?.ugc_right);
+  const targetRight = Number(targetRightRaw);
+  if (!VALID_UGC_RIGHTS.has(sourceRight) || !VALID_UGC_RIGHTS.has(targetRight)) {
+    return false;
+  }
+  if (targetRight === 64) {
+    return true;
+  }
+  if (sourceRight === 1) {
+    return true;
+  }
+  if (sourceRight === 64) {
+    return targetRight === 64;
+  }
+  if (sourceRight === 4) {
+    return targetRight === 4;
+  }
+  if (sourceRight !== targetRight) {
+    return false;
+  }
+  const sourceTargets = normalizedTargetSet(post?.target_uins);
+  const targetTargets = normalizedTargetSet(targetUins);
+  return Boolean(
+    sourceTargets &&
+      targetTargets &&
+      sourceTargets.size === targetTargets.size &&
+      [...sourceTargets].every((uin) => targetTargets.has(uin)),
+  );
+}
+
 function isAmbiguousDispatchFailure(error) {
   if (error?.dispatched === true) {
     return true;
@@ -173,6 +226,7 @@ function redactRecord(record) {
     dispatchAt: record.dispatchAt,
     providerId: record.providerId,
     evidence: record.evidence,
+    source: record.source,
   };
 }
 
@@ -286,6 +340,44 @@ export class QzonePublisher {
     };
   }
 
+  async recentPosts({
+    limit = 5,
+    ugc_right: targetRight = undefined,
+    ugcRight: targetRightCamel = undefined,
+    target_uins: targetUins = undefined,
+    targetUins: targetUinsCamel = undefined,
+  } = {}) {
+    const count = Math.max(1, Math.min(10, Math.floor(Number(limit) || 5)));
+    const configuredTargetRight = targetRight ?? targetRightCamel;
+    const target =
+      configuredTargetRight === undefined
+        ? null
+        : {
+            ugc_right: Number(configuredTargetRight),
+            target_uins: targetUins ?? targetUinsCamel ?? [],
+          };
+    const items = await this.#loadOutbox();
+    return items
+      .filter(
+        (item) =>
+          item?.state === 'sent' &&
+          typeof item?.text === 'string' &&
+          VALID_UGC_RIGHTS.has(Number(item?.ugc_right)) &&
+          (!target || isRecentPostVisibleToTarget(item, target)),
+      )
+      .slice(-count)
+      .reverse()
+      .map((item) => ({
+        text: item.text.trim().slice(0, 1000),
+        sentAt: item.updatedAt ?? item.dispatchAt ?? item.createdAt ?? null,
+        providerId: item.providerId ?? null,
+        ugc_right: Number(item.ugc_right),
+        target_uins: Array.isArray(item.target_uins) ? [...item.target_uins] : null,
+        visibility_label: qzoneVisibilityLabel(item.ugc_right),
+      }))
+      .filter((item) => item.text);
+  }
+
   async stop() {
     this.stopped = true;
     await this.queue.catch(() => {});
@@ -329,11 +421,18 @@ export class QzonePublisher {
 
     const fingerprint = normalizeForComparison(normalized);
     const now = new Date().toISOString();
+    const autonomous = options?.autonomous === true;
     const record = {
       id: randomUUID(),
       fingerprint,
       text: normalized,
       images,
+      source:
+        autonomous
+          ? 'autonomous'
+          : options?.explicitRequest === true
+            ? 'explicit'
+            : 'manual',
       state: 'draft',
       createdAt: now,
       updatedAt: now,
@@ -364,11 +463,14 @@ export class QzonePublisher {
       });
     }
 
-    const blocked = policyBlockReason(config);
+    const blocked = policyBlockReason(config, { autonomous });
     if (blocked) {
       return this.#finish(record, 'blocked', {
         reason: blocked,
-        message: '当前配置未允许空间发布；手动与模型发布共用此授权，草稿已保存。',
+        message:
+          blocked === 'auto_publish_disabled'
+            ? '当前未允许自主空间发布；本次为自主请求，草稿已保存。'
+            : '当前配置未允许空间发布；草稿已保存。',
       });
     }
 
@@ -423,7 +525,7 @@ export class QzonePublisher {
         message: `发送前重新读取配置失败，已停止：${error?.message ?? error}`,
       });
     }
-    const latestBlock = policyBlockReason(latestConfig);
+    const latestBlock = policyBlockReason(latestConfig, { autonomous });
     if (this.stopped || latestBlock) {
       return this.#finish(record, 'blocked', {
         reason: this.stopped ? 'publisher_stopped' : latestBlock,

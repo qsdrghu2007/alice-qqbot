@@ -583,8 +583,11 @@ export class OneBotAdapter {
 
     const parsed = parseOneBotMessage(payload.message);
     const rawMessage = String(payload.raw_message ?? "");
+    const mentionIds = Array.isArray(parsed.mentionIds)
+      ? parsed.mentionIds.map(String)
+      : [];
     const mentionedSelf =
-      parsed.mentionId === this._selfId ||
+      Boolean(this._selfId && mentionIds.includes(this._selfId)) ||
       Boolean(this._selfId && rawMessage.includes(`[CQ:at,qq=${this._selfId}]`));
     const scope = payload.message_type;
 
@@ -600,7 +603,7 @@ export class OneBotAdapter {
       text: parsed.text || (Array.isArray(payload.message) ? "" : rawMessage),
       attachments: parsed.attachments,
       links: Array.isArray(parsed.links) ? parsed.links : [],
-      mentionIds: Array.isArray(parsed.mentionIds) ? parsed.mentionIds : [],
+      mentionIds,
       mentionedSelf,
       ...(scope === "group" && parsed.quotedMessageId
         ? {
@@ -798,7 +801,12 @@ function normalizeHistoryMessage(message, time) {
     message?.message_sent_type === "self" || (selfId && senderId === selfId)
       ? "assistant"
       : "user";
-  return { role, text: text.slice(0, 1_000), time };
+  return {
+    role,
+    text: text.slice(0, 1_000),
+    time,
+    ...(role === "user" && senderId ? { speakerId: senderId } : {}),
+  };
 }
 
 function classifyOneBotResult(payload, action) {

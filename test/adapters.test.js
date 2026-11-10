@@ -718,6 +718,59 @@ test("OneBot forwards group chatter with reply metadata and ignores bot senders"
   assert.equal(calls, 1);
   assert.equal(events[0].mentionedSelf, false);
   assert.equal(events[0].text, "chat");
+  assert.equal(events[0].userId, "1234");
+  assert.match(events[0].timestamp, /^\d{4}-\d{2}-\d{2}T/u);
+  await adapter.stop();
+});
+
+test("OneBot recognizes self mentions in any position and forwards non-self mentions", async () => {
+  let socket;
+  const events = [];
+  const adapter = new OneBotAdapter({
+    getConfig: () => oneBotConfig(),
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    socketFactory: () => {
+      socket = new FakeSocket();
+      return socket;
+    },
+  });
+  await adapter.start(async (event) => {
+    events.push(event);
+  });
+  socket.open();
+
+  for (const [messageId, mentions] of [
+    [11, ["9000", "7777"]],
+    [12, ["7777", "9000"]],
+    [13, ["7777", "8888"]],
+  ]) {
+    socket.receive({
+      post_type: "message",
+      message_type: "group",
+      self_id: 9000,
+      user_id: 1234,
+      group_id: 5678,
+      message_id: messageId,
+      message: [
+        ...mentions.map((qq) => ({ type: "at", data: { qq } })),
+        { type: "text", data: { text: `message ${messageId}` } },
+      ],
+    });
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(events.length, 3);
+  assert.deepEqual(
+    events.map((event) => ({
+      mentionedSelf: event.mentionedSelf,
+      mentionIds: event.mentionIds,
+    })),
+    [
+      { mentionedSelf: true, mentionIds: ["9000", "7777"] },
+      { mentionedSelf: true, mentionIds: ["7777", "9000"] },
+      { mentionedSelf: false, mentionIds: ["7777", "8888"] },
+    ],
+  );
   await adapter.stop();
 });
 
@@ -1400,6 +1453,7 @@ test("OneBot history retries the opposite page direction and skips non-OneBot ev
     result.map((message) => message.text),
     ["最近一", "最近二", "更早三"],
   );
+  assert.equal(result[0].speakerId, "10001");
 
   assert.deepEqual(
     await adapter.fetchHistory({

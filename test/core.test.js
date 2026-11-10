@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { AIRequestError, chat as aiChat } from "../src/ai.js";
 import {
+  LEGACY_DEFAULT_SYSTEM_PROMPT,
   defaultConfig,
   loadConfig,
   publicConfig,
@@ -19,6 +20,7 @@ import {
 } from "../src/conversation-state.js";
 import { Store } from "../src/store.js";
 import { Engine } from "../src/engine.js";
+import { enforceBasicMode } from "../src/index.js";
 
 async function temporaryDirectory(t) {
   const root = await mkdtemp(path.join(tmpdir(), "xiaoyu-core-"));
@@ -135,6 +137,7 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
   assert.ok(defaultConfig.persona.opinions.length >= 2);
   assert.equal(defaultConfig.inputDelayMs, 2000);
   assert.match(defaultConfig.ai.systemPrompt, /默认只回一句/);
+  assert.doesNotMatch(defaultConfig.ai.systemPrompt, /你是 Alice/);
   assert.doesNotMatch(defaultConfig.ai.systemPrompt, /声称自己有意识/);
   assert.deepEqual(defaultConfig.memory, {
     enabled: true,
@@ -229,14 +232,20 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
   });
   assert.deepEqual(defaultConfig.userUnderstanding, userUnderstandingDefaults);
   assert.deepEqual(defaultConfig.groupChat, {
-    enabled: true,
+    enabled: false,
     defaultMode: "natural",
+    activityLevel: "medium",
+    allowUnprompted: true,
     modes: {},
     quietHours: { start: 23, end: 8 },
     timezone: "Asia/Shanghai",
-    proactiveWaitBaseMs: 30000,
-    proactiveWaitPerMemberMs: 1200,
+    activityWindowSeconds: 90,
+    proactiveWaitBaseMs: 6000,
+    continuationWindowMinutes: 3,
     budgetPerHour: 6,
+    continuationBudgetPerHour: 12,
+    totalBudgetPerHour: 18,
+    historySearchHours: 24,
     cooldownMinutes: 4,
     maxConsecutiveMessages: 3,
     noResponseMinutes: 2,
@@ -405,18 +414,26 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
   assert.equal(understandingSaved.userUnderstanding.maxInjectedChars, 900);
   const groupSaved = await saveConfig(root, {
     groupChat: {
-      defaultMode: "active",
-      modes: { "123456": "mention" },
+      enabled: true,
+      allowUnprompted: false,
+      activityLevel: "high",
+      continuationWindowMinutes: 7,
       budgetPerHour: 4,
+      continuationBudgetPerHour: 0,
+      totalBudgetPerHour: 0,
+      historySearchHours: 48,
       cooldownMinutes: 8,
     },
   });
-  assert.equal(groupSaved.groupChat.defaultMode, "active");
-  assert.deepEqual(groupSaved.groupChat.modes, { "123456": "mention" });
+  assert.equal(groupSaved.groupChat.enabled, true);
+  assert.equal(groupSaved.groupChat.allowUnprompted, false);
+  assert.equal(groupSaved.groupChat.activityLevel, "high");
+  assert.equal(groupSaved.groupChat.continuationWindowMinutes, 7);
   assert.equal(groupSaved.groupChat.budgetPerHour, 4);
+  assert.equal(groupSaved.groupChat.continuationBudgetPerHour, 0);
+  assert.equal(groupSaved.groupChat.totalBudgetPerHour, 0);
+  assert.equal(groupSaved.groupChat.historySearchHours, 48);
   assert.equal(groupSaved.groupChat.cooldownMinutes, 8);
-  const groupCleared = await saveConfig(root, { groupChat: { modes: {} } });
-  assert.deepEqual(groupCleared.groupChat.modes, {});
 
   const retained = await saveConfig(root, {
     ai: { apiKey: "   " },
@@ -538,6 +555,22 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
     saveConfig(root, { groupChat: { budgetPerHour: 61 } }),
     /groupChat.budgetPerHour/,
   );
+  for (const [key, value] of [
+    ["continuationBudgetPerHour", -1],
+    ["continuationBudgetPerHour", 1.5],
+    ["continuationBudgetPerHour", 61],
+    ["totalBudgetPerHour", -1],
+    ["totalBudgetPerHour", 1.5],
+    ["totalBudgetPerHour", 61],
+    ["historySearchHours", 0],
+    ["historySearchHours", 169],
+    ["historySearchHours", 1.5],
+  ]) {
+    await assert.rejects(
+      saveConfig(root, { groupChat: { [key]: value } }),
+      new RegExp(`groupChat.${key}`),
+    );
+  }
   await assert.rejects(
     saveConfig(root, { memory: { minImportance: 0 } }),
     /minImportance/,
@@ -660,18 +693,49 @@ test("config deep merge, validation, secret preservation, and public scrubbing",
   );
 });
 
+test("basic mode keeps web search and memory under their configured switches", () => {
+  const config = enforceBasicMode(
+    configured({
+      memory: { enabled: true, autoExtract: true },
+      webSearch: {
+        enabled: true,
+        searchEnabled: true,
+        fetchEnabled: true,
+      },
+    }),
+  );
+
+  assert.equal(config.memory.enabled, true);
+  assert.equal(config.memory.autoExtract, true);
+  assert.equal(config.webSearch.enabled, true);
+  assert.equal(config.webSearch.searchEnabled, true);
+  assert.equal(config.webSearch.fetchEnabled, true);
+  assert.equal(config.userUnderstanding.enabled, false);
+  assert.equal(config.followUp.enabled, false);
+  assert.equal(config.qzone.enabled, false);
+});
+
 test("old config files gain user-understanding defaults without losing unknown keys", async (t) => {
   const root = await temporaryDirectory(t);
   await mkdir(path.join(root, "data"), { recursive: true });
   await writeFile(
     path.join(root, "data", "config.json"),
-    JSON.stringify({ port: 4322, futureSection: { keep: true } }),
+    JSON.stringify({
+      port: 4322,
+      ai: { systemPrompt: LEGACY_DEFAULT_SYSTEM_PROMPT },
+      futureSection: { keep: true },
+    }),
     "utf8",
   );
 
   const loaded = await loadConfig(root);
   assert.deepEqual(loaded.userUnderstanding, userUnderstandingDefaults);
   assert.deepEqual(loaded.futureSection, { keep: true });
+  assert.doesNotMatch(loaded.ai.systemPrompt, /你是 Alice/);
+
+  const customPrompt = "这是用户保存的自定义人格，文中可以提到 Alice 作为历史名字。";
+  const custom = await saveConfig(root, { ai: { systemPrompt: customPrompt } });
+  assert.equal(custom.ai.systemPrompt, customPrompt);
 
   const saved = await saveConfig(root, { userUnderstanding: { hour: 4 } });
   assert.equal(saved.userUnderstanding.hour, 4);
@@ -2622,7 +2686,7 @@ test("ordinary group members cannot publish; local owner can publish via service
   assert.deepEqual(published, ["来自本地控制台"]);
 });
 
-test("publish tool needs an explicit request unless automatic publishing is enabled", async (t) => {
+test("publish tool ignores generated text when checking the user's explicit request", async (t) => {
   const { store } = await setupStore(t);
   let published = 0;
   let round = 0;
@@ -2638,7 +2702,7 @@ test("publish tool needs an explicit request unless automatic publishing is enab
         round += 1;
         return round === 1
           ? aiReply("", [
-              { name: "publish_qzone", arguments: { text: "模型擅自想发的内容" } },
+              { name: "publish_qzone", arguments: { text: "模型擅自想发空间的内容" } },
             ])
           : aiReply("没有发布");
       },
@@ -2685,12 +2749,15 @@ test("publish tool forwards up to four HTTPS images and rejects invalid URLs", a
       },
     },
   });
-  await engine.handle(event({ id: "publish-images", channel: "onebot" }));
+  await engine.handle(
+    event({ id: "publish-images", channel: "onebot", text: "把这两张图发到空间" }),
+  );
   assert.deepEqual(calls, [
     {
       text: "带图动态",
       options: {
         images: ["https://example.com/1.png", "https://example.com/2.jpg"],
+        explicitRequest: true,
       },
     },
   ]);
@@ -2945,9 +3012,21 @@ test("AI history and memory never cross groups, private chats, or linked identit
       groupId: "group-a",
     }),
   );
+  await engine.handle(
+    event({
+      id: "group-b",
+      channel: "onebot",
+      scope: "group",
+      userId: "private-user",
+      conversationId: "group-b-chat",
+      groupId: "group-b",
+    }),
+  );
   assert.match(prompts[0], /私聊用户秘密/);
   assert.doesNotMatch(prompts[1], /B群秘密/);
   assert.doesNotMatch(prompts[1], /私聊用户秘密/);
+  assert.match(prompts[2], /B群秘密/);
+  assert.doesNotMatch(prompts[2], /私聊用户秘密/);
 
   config = configured({
     identityLinks: { "qq:alice": "shared-alice" },
@@ -2975,6 +3054,261 @@ test("AI history and memory never cross groups, private chats, or linked identit
     }),
   );
   assert.match(prompts.at(-1), /显式绑定后的共享信息/);
+});
+
+test("pure private acknowledgements can close silently without losing the committed user message", async (t) => {
+  const { store } = await setupStore(t);
+  const conversationKey = JSON.stringify(["onebot", "private", "ack-user", "ack-user"]);
+  await store.append(conversationKey, [
+    { role: "assistant", content: "路线已经说完了，到路口记得看标识。" },
+  ]);
+  let judgeCalls = 0;
+  let chatCalls = 0;
+  const engine = new Engine({
+    getConfig: async () =>
+      configured({
+        conversationState: { enabled: false, reviewEnabled: false },
+        chatExit: { enabled: false },
+      }),
+    store,
+    services: {
+      chat: async ({ messages }) => {
+        if (messages[0].content.includes("【私聊确认与收尾判断】")) {
+          judgeCalls += 1;
+          return aiReply('{"close":true}');
+        }
+        chatCalls += 1;
+        return aiReply("那就按刚才的走。");
+      },
+    },
+  });
+
+  const reply = await engine.handle(
+    event({
+      id: "private-ack",
+      channel: "onebot",
+      userId: "ack-user",
+      conversationId: "ack-user",
+      text: "收到",
+      conversationActive: true,
+    }),
+    { deferCommit: true },
+  );
+  assert.equal(reply.suppressed, true);
+  assert.equal(reply.silent, true);
+  assert.equal(judgeCalls, 1);
+  assert.equal(chatCalls, 0);
+  assert.equal((await store.history(conversationKey)).length, 1);
+  await engine.commitDeliveredTurn(reply, { final: true });
+  assert.deepEqual(
+    (await store.history(conversationKey)).map((message) => ({
+      role: message.role,
+      content: message.content,
+    })),
+    [
+      { role: "assistant", content: "路线已经说完了，到路口记得看标识。" },
+      { role: "user", content: "收到" },
+    ],
+  );
+
+  await engine.handle(
+    event({
+      id: "batched-ack",
+      channel: "onebot",
+      userId: "ack-user",
+      conversationId: "ack-user",
+      text: "嗯嗯",
+      mergedCount: 2,
+      conversationActive: true,
+    }),
+    { deferCommit: true },
+  );
+  assert.equal(judgeCalls, 1);
+  assert.equal(chatCalls, 1);
+});
+
+test("a no-question offer is not closed by a possible authorization", async (t) => {
+  const { store } = await setupStore(t);
+  const conversationKey = JSON.stringify(["onebot", "private", "offer-user", "offer-user"]);
+  await store.append(conversationKey, [
+    { role: "assistant", content: "我可以帮你查一下。" },
+  ]);
+  let judgeCalls = 0;
+  let chatCalls = 0;
+  let judgeRequest;
+  let judgePayload;
+  const engine = new Engine({
+    getConfig: async () =>
+      configured({
+        conversationState: { enabled: false, reviewEnabled: false },
+        chatExit: { enabled: false },
+      }),
+    store,
+    services: {
+      chat: async (request) => {
+        if (request.messages[0].content.includes("【私聊确认与收尾判断】")) {
+          judgeCalls += 1;
+          judgeRequest = request;
+          judgePayload = JSON.parse(request.messages.at(-1).content);
+          return aiReply('{"close":false}');
+        }
+        chatCalls += 1;
+        return aiReply("好，我去查。");
+      },
+    },
+  });
+
+  const reply = await engine.handle(
+    event({
+      id: "private-offer-ack",
+      channel: "onebot",
+      userId: "offer-user",
+      conversationId: "offer-user",
+      text: "好",
+      conversationActive: true,
+    }),
+  );
+  assert.equal(judgeCalls, 1);
+  assert.equal(chatCalls, 1);
+  assert.equal(reply.suppressed, undefined);
+  assert.equal(reply.text, "好，我去查。");
+  assert.deepEqual(judgePayload, {
+    recent_messages: [{ role: "assistant", content: "我可以帮你查一下。" }],
+    current_user: "好",
+  });
+  assert.deepEqual(judgeRequest.tools, []);
+  assert.equal(judgeRequest.maxTokens, 40);
+  assert.equal(judgeRequest.thinking, "disabled");
+  assert.equal(judgeRequest.reasoningEffort, "low");
+  assert.equal(judgeRequest.timeoutMs, 5000);
+});
+
+test("invalid or failed acknowledgement judgement falls back to a normal reply", async (t) => {
+  for (const mode of ["invalid", "error"]) {
+    const { store } = await setupStore(t);
+    const conversationKey = JSON.stringify([
+      "onebot",
+      "private",
+      `judge-${mode}`,
+      `judge-${mode}`,
+    ]);
+    await store.append(conversationKey, [
+      { role: "assistant", content: "路线已经说完了，到路口记得看标识。" },
+    ]);
+    let judgeCalls = 0;
+    let chatCalls = 0;
+    const engine = new Engine({
+      getConfig: async () =>
+        configured({
+          conversationState: { enabled: false, reviewEnabled: false },
+          chatExit: { enabled: false },
+        }),
+      store,
+      services: {
+        chat: async ({ messages }) => {
+          if (messages[0].content.includes("【私聊确认与收尾判断】")) {
+            judgeCalls += 1;
+            if (mode === "error") throw new Error("judge unavailable");
+            return aiReply("not json");
+          }
+          chatCalls += 1;
+          return aiReply("好，那先这样。");
+        },
+      },
+    });
+    const reply = await engine.handle(
+      event({
+        id: `private-ack-${mode}`,
+        channel: "onebot",
+        userId: `judge-${mode}`,
+        conversationId: `judge-${mode}`,
+        text: "收到",
+        conversationActive: true,
+      }),
+    );
+    assert.equal(judgeCalls, 1);
+    assert.equal(chatCalls, 1);
+    assert.equal(reply.suppressed, undefined);
+    assert.equal(reply.text, "好，那先这样。");
+  }
+});
+
+test("explicit group replies persist speaker metadata, receive a bounded scene, and reserve JSON rules for decisions", async (t) => {
+  const { store } = await setupStore(t);
+  const conversationKey = JSON.stringify(["onebot", "group", "scene-group", "scene-group"]);
+  await store.append(conversationKey, [
+    {
+      role: "user",
+      content: "旧群消息",
+      speakerId: "10002",
+      timestamp: new Date().toISOString(),
+    },
+  ]);
+  const prompts = [];
+  const engine = new Engine({
+    getConfig: async () => configured({ conversationState: { enabled: false } }),
+    store,
+    services: {
+      chat: async ({ messages }) => {
+        prompts.push(structuredClone(messages));
+        return aiReply("我记得刚才在聊这个。");
+      },
+    },
+  });
+  const explicit = event({
+    id: "explicit-scene",
+    channel: "onebot",
+    scope: "group",
+    userId: "10001",
+    conversationId: "scene-group",
+    groupId: "scene-group",
+    text: "Alice 接着刚才说",
+    groupScene: [
+      { speaker: "成员2", text: "先看联机设置。", quoteSpeaker: "" },
+      { speaker: "成员1", text: "Alice 接着刚才说", quoteSpeaker: "成员2" },
+    ],
+  });
+  await engine.handle(explicit);
+
+  const firstSystem = prompts[0][0].content;
+  assert.match(firstSystem, /【群聊参与方式】/u);
+  assert.doesNotMatch(firstSystem, /【非点名群聊候选决策】/u);
+  assert.match(prompts[0].at(-1).content, /先看联机设置/u);
+  const prior = prompts[0].find(
+    (message) =>
+      message.role === "user" && message.content.includes("旧群消息"),
+  );
+  assert.deepEqual(Object.keys(prior).sort(), ["content", "role"]);
+  assert.match(prior.content, /\[群成员 10002\]/u);
+  const saved = await store.history(conversationKey);
+  assert.deepEqual(
+    saved.slice(-2).map((message) => ({
+      role: message.role,
+      speakerId: message.speakerId,
+    })),
+    [
+      { role: "user", speakerId: "10001" },
+      { role: "assistant", speakerId: "assistant" },
+    ],
+  );
+  assert.match(saved.at(-2).timestamp, /^\d{4}-\d{2}-\d{2}T/u);
+
+  await engine.handle(
+    event({
+      id: "candidate-scene",
+      channel: "onebot",
+      scope: "group",
+      userId: "10001",
+      conversationId: "scene-group",
+      groupId: "scene-group",
+      text: "联机还有别的方案",
+      groupDecision: {
+        kind: "proactive",
+        scene: [{ speaker: "成员1", text: "联机还有别的方案", quoteSpeaker: "" }],
+      },
+    }),
+  );
+  assert.match(prompts[1][0].content, /【非点名群聊候选决策】/u);
 });
 
 test("engine injects the highest-importance memories within the configured limit", async (t) => {
@@ -3073,6 +3407,46 @@ test("engine appends the short-reply style contract after other prompt sections"
   assert.match(prompt, /不要模仿它们的长度和语气/);
 });
 
+test("saved persona name and system prompt lead the next dynamic system prompt", async (t) => {
+  const { store } = await setupStore(t);
+  let prompt = "";
+  let config = configured({
+    persona: {
+      name: "小夏",
+      preferences: ["喜欢雨天"],
+      opinions: ["不急着给结论"],
+    },
+    ai: {
+      systemPrompt: "用户保存的人格是冷静、直率，但仍遵守功能边界。",
+    },
+  });
+  const engine = new Engine({
+    getConfig: async () => config,
+    store,
+    services: {
+      chat: async ({ messages }) => {
+        prompt = messages[0].content;
+        return aiReply("在");
+      },
+    },
+  });
+  await engine.handle(event({ id: "profile-priority", text: "你是谁" }));
+
+  assert.match(prompt, /当前人格名称是“小夏”/);
+  assert.match(prompt, /用户保存的人格是冷静、直率/);
+  assert.doesNotMatch(prompt, /你是 Alice/);
+  assert.ok(prompt.indexOf("用户保存的人格") > prompt.indexOf("你的稳定喜好"));
+  assert.ok(prompt.indexOf("【聊天方式，优先级最高】") > prompt.indexOf("用户保存的人格"));
+
+  config = structuredClone(config);
+  config.persona.name = "小秋";
+  config.ai.systemPrompt = "第二版人格：温和但直接。";
+  await engine.handle(event({ id: "profile-priority-next", text: "再说一次" }));
+  assert.match(prompt, /当前人格名称是“小秋”/);
+  assert.match(prompt, /第二版人格：温和但直接/);
+  assert.doesNotMatch(prompt, /小夏|用户保存的人格是冷静/);
+});
+
 test("engine skips automatic extraction when memory is disabled or already saved by tool", async (t) => {
   const { store } = await setupStore(t);
   let memoryCalls = 0;
@@ -3111,6 +3485,41 @@ test("engine skips automatic extraction when memory is disabled or already saved
   assert.equal(
     (await store.memories(JSON.stringify(["private-memory", "onebot", "10002"]))).length,
     1,
+  );
+
+  let groupRound = 0;
+  const groupEngine = new Engine({
+    getConfig: async () => configured(),
+    store,
+    services: {
+      chat: async () => {
+        groupRound += 1;
+        return groupRound === 1
+          ? aiReply("", [
+              { name: "remember", arguments: { text: "周末一起玩" } },
+            ])
+          : aiReply("记下了");
+      },
+    },
+  });
+  await groupEngine.handle(
+    event({
+      id: "group-tool-memory",
+      channel: "onebot",
+      scope: "group",
+      userId: "10001",
+      conversationId: "group-tool",
+      groupId: "group-tool",
+      text: "请记住周末一起玩",
+    }),
+  );
+  assert.equal(
+    (
+      await store.memories(
+        JSON.stringify(["group-memory", "onebot", "group-tool"]),
+      )
+    )[0].text,
+    "群成员10001要求保存：周末一起玩",
   );
 
   const disabled = new Engine({
@@ -3520,6 +3929,132 @@ test("recall fetches OneBot history only after memory and local misses", async (
   assert.equal(toolResult.origin, "napcat");
 });
 
+test("group recall applies the configured window to timestamped local and remote history", async (t) => {
+  const { store } = await setupStore(t);
+  const now = Date.now();
+  const localKey = JSON.stringify(["onebot", "group", "local-window", "local-window"]);
+  await store.append(localKey, [
+    {
+      role: "user",
+      content: "最近聊过琥珀岛的路线",
+      speakerId: "10002",
+      timestamp: new Date(now - 60 * 60 * 1000).toISOString(),
+    },
+    {
+      role: "user",
+      content: "很久以前也聊过琥珀岛",
+      speakerId: "10003",
+      timestamp: new Date(now - 48 * 60 * 60 * 1000).toISOString(),
+    },
+    { role: "user", content: "无时间的旧琥珀岛记录" },
+  ]);
+  let round = 0;
+  let localResult;
+  let fetched = 0;
+  const localEngine = new Engine({
+    getConfig: async () =>
+      configured({ groupChat: { historySearchHours: 24 } }),
+    store,
+    services: {
+      chat: async ({ messages }) => {
+        round += 1;
+        if (round === 1) {
+          return aiReply("", [
+            { name: "recall", arguments: { query: "琥珀岛", source: "history" } },
+          ]);
+        }
+        localResult = JSON.parse(messages.at(-1).content);
+        return aiReply("最近聊过。");
+      },
+      fetchHistory: async () => {
+        fetched += 1;
+        return [];
+      },
+    },
+  });
+  await localEngine.handle(
+    event({
+      id: "group-local-window",
+      channel: "onebot",
+      scope: "group",
+      userId: "10001",
+      conversationId: "local-window",
+      groupId: "local-window",
+      text: "还记得琥珀岛吗",
+    }),
+  );
+  assert.equal(localResult.origin, "local");
+  assert.deepEqual(
+    localResult.results.map((item) => item.text),
+    ["最近聊过琥珀岛的路线"],
+  );
+  assert.equal(localResult.results[0].speakerId, "10002");
+  assert.equal(fetched, 0);
+
+  const remoteKey = JSON.stringify(["onebot", "group", "remote-window", "remote-window"]);
+  await store.append(remoteKey, [
+    {
+      role: "user",
+      content: "过期琥珀岛记录",
+      timestamp: new Date(now - 30 * 60 * 60 * 1000).toISOString(),
+    },
+    { role: "user", content: "无时间琥珀岛记录" },
+  ]);
+  round = 0;
+  let remoteResult;
+  let fetchOptions;
+  const remoteEngine = new Engine({
+    getConfig: async () => configured({ groupChat: { historySearchHours: 24 } }),
+    store,
+    services: {
+      chat: async ({ messages }) => {
+        round += 1;
+        if (round === 1) {
+          return aiReply("", [
+            { name: "recall", arguments: { query: "琥珀岛", source: "auto" } },
+          ]);
+        }
+        remoteResult = JSON.parse(messages.at(-1).content);
+        return aiReply("远程记录里有。");
+      },
+      fetchHistory: async (_event, options) => {
+        fetchOptions = options;
+        return [
+          {
+            role: "user",
+            text: "远程最近的琥珀岛记录",
+            time: now - 2 * 60 * 60 * 1000,
+            speakerId: "10004",
+          },
+          {
+            role: "user",
+            text: "远程过期的琥珀岛记录",
+            time: now - 36 * 60 * 60 * 1000,
+          },
+          { role: "user", text: "远程无时间的琥珀岛记录" },
+        ];
+      },
+    },
+  });
+  await remoteEngine.handle(
+    event({
+      id: "group-remote-window",
+      channel: "onebot",
+      scope: "group",
+      userId: "10001",
+      conversationId: "remote-window",
+      groupId: "remote-window",
+      text: "再说说琥珀岛",
+    }),
+  );
+  assert.equal(fetchOptions.maxAgeMs, 24 * 60 * 60 * 1000);
+  assert.equal(remoteResult.origin, "napcat");
+  assert.deepEqual(remoteResult.results.map((item) => item.text), [
+    "远程最近的琥珀岛记录",
+  ]);
+  assert.equal(remoteResult.results[0].speakerId, "10004");
+});
+
 test("recall tells the model to admit forgetting when everything misses", async (t) => {
   const { store } = await setupStore(t);
   let round = 0;
@@ -3786,49 +4321,12 @@ test("tool call limit is configurable", async (t) => {
   assert.equal(result.text, "好了。");
 });
 
-test("group chats only search after an explicit request", async (t) => {
+test("group chats use the same on-demand web search path as private chats", async (t) => {
   const { store } = await setupStore(t);
-  let blockedRound = 0;
-  let blockedResult;
-  const blockedEngine = new Engine({
-    getConfig: async () => configured(),
-    store,
-    services: {
-      webSearch: {
-        async search() {
-          throw new Error("should not search");
-        },
-      },
-      chat: async ({ messages }) => {
-        blockedRound += 1;
-        if (blockedRound === 1) {
-          return aiReply("", [
-            { name: "web_search", arguments: { query: "今天的新闻" } },
-          ]);
-        }
-        blockedResult = JSON.parse(messages.at(-1).content);
-        return aiReply("我不太清楚。");
-      },
-    },
-  });
-
-  await blockedEngine.handle(
-    event({
-      id: "group-web-blocked",
-      channel: "onebot",
-      scope: "group",
-      userId: "10001",
-      conversationId: "20002",
-      groupId: "20002",
-      text: "群里有人知道今天的新闻吗",
-    }),
-  );
-  assert.equal(blockedResult.ok, false);
-  assert.match(blockedResult.error, /明确要求搜索/);
-
-  let allowedRound = 0;
+  let round = 0;
   let searchCalls = 0;
-  const allowedEngine = new Engine({
+  const offeredTools = [];
+  const engine = new Engine({
     getConfig: async () => configured(),
     store,
     services: {
@@ -3838,27 +4336,76 @@ test("group chats only search after an explicit request", async (t) => {
           return { ok: true, found: true, query: "新闻", results: [] };
         },
       },
-      chat: async () => {
-        allowedRound += 1;
-        return allowedRound === 1
-          ? aiReply("", [{ name: "web_search", arguments: { query: "新闻" } }])
-          : aiReply("我去看了，没有新的。");
+      chat: async ({ tools }) => {
+        round += 1;
+        offeredTools.push(tools.map((tool) => tool.function.name));
+        if (round === 1) {
+          return aiReply("", [{ name: "web_search", arguments: { query: "新闻" } }]);
+        }
+        return aiReply("我去看了，没有新的。");
       },
     },
   });
 
-  await allowedEngine.handle(
+  await engine.handle(
     event({
-      id: "group-web-allowed",
+      id: "group-web-on-demand",
       channel: "onebot",
       scope: "group",
       userId: "10001",
       conversationId: "20002",
       groupId: "20002",
-      text: "帮我搜一下今天的新闻",
+      text: "群里有人知道今天的新闻吗",
     }),
   );
   assert.equal(searchCalls, 1);
+  assert.ok(offeredTools[0].includes("web_search"));
+  assert.ok(offeredTools[0].includes("web_fetch"));
+});
+
+test("private and group chats expose memory tools under the same switch", async (t) => {
+  const { store } = await setupStore(t);
+  const run = async (memoryEnabled) => {
+    const offered = [];
+    const engine = new Engine({
+      getConfig: async () =>
+        configured({
+          memory: { enabled: memoryEnabled, autoExtract: false },
+          webSearch: { enabled: false },
+        }),
+      store,
+      services: {
+        chat: async ({ tools }) => {
+          offered.push(tools.map((tool) => tool.function.name));
+          return aiReply("记下了");
+        },
+      },
+    });
+    await engine.handle(
+      event({ id: `private-memory-${memoryEnabled}`, channel: "onebot" }),
+    );
+    await engine.handle(
+      event({
+        id: `group-memory-${memoryEnabled}`,
+        channel: "onebot",
+        scope: "group",
+        conversationId: "group-tools",
+        groupId: "group-tools",
+      }),
+    );
+    return offered;
+  };
+
+  const enabled = await run(true);
+  assert.deepEqual(enabled[1], enabled[0]);
+  assert.ok(enabled[0].includes("recall"));
+  assert.ok(enabled[0].includes("remember"));
+
+  const disabled = await run(false);
+  assert.equal(disabled[0].includes("recall"), false);
+  assert.equal(disabled[0].includes("remember"), false);
+  assert.equal(disabled[1].includes("recall"), false);
+  assert.equal(disabled[1].includes("remember"), false);
 });
 
 test("ai.historyMessages controls direct context and 0 injects all retained history", async (t) => {

@@ -199,20 +199,88 @@ export class Store {
     this.file = path.join(this.root, STORE_FILE);
     this.backupDir = path.join(this.root, "data", "backups");
     this.data = emptyData();
-    this._queue = Promise.resolve();
+    this._mutationOps = [];
+    this._flushScheduled = null;
+    this._flushPromise = null;
+    this._exclusiveGate = Promise.resolve();
   }
 
-  _locked(operation) {
-    const result = this._queue.then(operation, operation);
-    this._queue = result.then(
+  _exclusive(operation) {
+    const result = this._exclusiveGate.then(async () => {
+      await this._waitForIdle();
+      return operation();
+    });
+    this._exclusiveGate = result.then(
       () => undefined,
       () => undefined,
     );
     return result;
   }
 
+  _enqueueMutation(mutate) {
+    return this._exclusiveGate.then(
+      () =>
+        new Promise((resolve, reject) => {
+          this._mutationOps.push({ mutate, resolve, reject });
+          this._scheduleFlush();
+        }),
+    );
+  }
+
+  _scheduleFlush() {
+    if (this._flushScheduled || this._flushPromise) return;
+    this._flushScheduled = setImmediate(() => {
+      this._flushScheduled = null;
+      this._flushPromise = this._flushMutations();
+      this._flushPromise.finally(() => {
+        this._flushPromise = null;
+        if (this._mutationOps.length) this._scheduleFlush();
+      });
+    });
+  }
+
+  async _flushMutations() {
+    const batch = this._mutationOps.splice(0);
+    if (!batch.length) return;
+
+    let next = this.data;
+    const applied = [];
+    try {
+      for (const operation of batch) {
+        const outcome = operation.mutate(next);
+        next = outcome.data;
+        applied.push({ operation, result: outcome.result });
+      }
+    } catch (error) {
+      for (const operation of batch) operation.reject(error);
+      return;
+    }
+    if (next === this.data) {
+      for (const { operation, result } of applied) operation.resolve(result);
+      return;
+    }
+
+    try {
+      await atomicWriteJson(this.file, next);
+      this.data = next;
+      for (const { operation, result } of applied) operation.resolve(result);
+    } catch (error) {
+      for (const operation of batch) operation.reject(error);
+    }
+  }
+
+  async _waitForIdle() {
+    while (this._mutationOps.length || this._flushPromise) {
+      if (this._flushPromise) {
+        await this._flushPromise;
+      } else {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+  }
+
   async init() {
-    return this._locked(async () => {
+    return this._exclusive(async () => {
       try {
         const raw = await readFile(this.file, "utf8");
         const parsed = JSON.parse(raw);
@@ -238,69 +306,100 @@ export class Store {
   }
 
   async history(key) {
-    return this._locked(async () => clone(this.data.conversations[normalizeKey(key)] ?? []));
+    const normalized = normalizeKey(key);
+    return this._exclusive(async () =>
+      clone(this.data.conversations[normalized] ?? []),
+    );
   }
 
   async append(key, messages) {
-    return this._locked(async () => {
-      const normalized = normalizeKey(key);
-      if (!Array.isArray(messages)) throw new TypeError("messages 必须是数组");
-      messages.forEach(validateMessage);
-      const next = clone(this.data);
-      const current = next.conversations[normalized] ?? [];
-      next.conversations[normalized] = [...current, ...clone(messages)].slice(
-        -MAX_HISTORY,
-      );
-      await atomicWriteJson(this.file, next);
-      this.data = next;
+    const normalized = normalizeKey(key);
+    if (!Array.isArray(messages)) throw new TypeError("messages 必须是数组");
+    messages.forEach(validateMessage);
+    const appended = clone(messages);
+    return this._enqueueMutation((data) => {
+      const current = data.conversations[normalized] ?? [];
+      return {
+        data: {
+          ...data,
+          conversations: {
+            ...data.conversations,
+            [normalized]: [...current, ...appended].slice(-MAX_HISTORY),
+          },
+        },
+        result: undefined,
+      };
     });
   }
 
   async resetHistory(key) {
-    return this._locked(async () => {
-      const normalized = normalizeKey(key);
-      const next = clone(this.data);
-      next.conversations[normalized] = [];
-      await atomicWriteJson(this.file, next);
-      this.data = next;
+    const normalized = normalizeKey(key);
+    return this._enqueueMutation((data) => {
+      if (!(data.conversations[normalized] ?? []).length) {
+        return { data, result: undefined };
+      }
+      return {
+        data: {
+          ...data,
+          conversations: { ...data.conversations, [normalized]: [] },
+        },
+        result: undefined,
+      };
     });
   }
 
   async memories(key, { limit = null, touch = false, touchIntervalMs = TOUCH_INTERVAL_MS } = {}) {
-    return this._locked(async () => {
-      const normalized = normalizeKey(key);
-      if (limit !== null && (!Number.isInteger(limit) || limit < 1)) {
-        throw new TypeError("记忆 limit 必须是正整数");
-      }
-      let sorted = [...(this.data.memories[normalized] ?? [])].sort(compareMemories);
+    const normalized = normalizeKey(key);
+    if (limit !== null && (!Number.isInteger(limit) || limit < 1)) {
+      throw new TypeError("记忆 limit 必须是正整数");
+    }
+    if (!touch) {
+      return this._exclusive(async () => {
+        let sorted = [...(this.data.memories[normalized] ?? [])].sort(
+          compareMemories,
+        );
+        if (limit !== null) sorted = sorted.slice(0, limit);
+        return clone(sorted);
+      });
+    }
+    return this._enqueueMutation((data) => {
+      let sorted = [...(data.memories[normalized] ?? [])].sort(compareMemories);
       if (limit !== null) sorted = sorted.slice(0, limit);
-      if (!touch) return clone(sorted);
-
       const now = Date.now();
       const ids = new Set(sorted.map((memory) => memory.id));
-      const next = clone(this.data);
       let changed = false;
-      for (const memory of next.memories[normalized] ?? []) {
-        if (!ids.has(memory.id)) continue;
-        if (now - timeValue(memory.lastAccessedAt) < touchIntervalMs) continue;
-        memory.lastAccessedAt = new Date(now).toISOString();
+      const updatedList = (data.memories[normalized] ?? []).map((memory) => {
+        if (
+          !ids.has(memory.id) ||
+          now - timeValue(memory.lastAccessedAt) < touchIntervalMs
+        ) {
+          return memory;
+        }
         changed = true;
-      }
+        return { ...memory, lastAccessedAt: new Date(now).toISOString() };
+      });
+      const next = changed
+        ? {
+            ...data,
+            memories: {
+              ...data.memories,
+              [normalized]: updatedList,
+            },
+          }
+        : data;
       if (changed) {
-        await atomicWriteJson(this.file, next);
-        this.data = next;
         const byId = new Map(
-          (next.memories[normalized] ?? []).map((memory) => [memory.id, memory]),
+          updatedList.map((memory) => [memory.id, memory]),
         );
         sorted = sorted.map((memory) => byId.get(memory.id) ?? memory);
       }
-      return clone(sorted);
+      return { data: next, result: clone(sorted) };
     });
   }
 
   async searchMemories(key, query, { limit = 10 } = {}) {
-    return this._locked(async () => {
-      const normalized = normalizeKey(key);
+    const normalized = normalizeKey(key);
+    return this._exclusive(async () => {
       const matches = rankMatches(this.data.memories[normalized] ?? [], query, {
         limit,
         textOf: (memory) => memory.text,
@@ -311,8 +410,8 @@ export class Store {
   }
 
   async searchHistory(key, query, { limit = 10 } = {}) {
-    return this._locked(async () => {
-      const normalized = normalizeKey(key);
+    const normalized = normalizeKey(key);
+    return this._exclusive(async () => {
       const messages = (this.data.conversations[normalized] ?? []).filter(
         (message) =>
           ["user", "assistant"].includes(message.role) &&
@@ -328,7 +427,7 @@ export class Store {
   }
 
   async memoryScopes() {
-    return this._locked(async () => clone(Object.keys(this.data.memories)));
+    return this._exclusive(async () => clone(Object.keys(this.data.memories)));
   }
 
   async remember(
@@ -342,24 +441,23 @@ export class Store {
       now = new Date().toISOString(),
     } = {},
   ) {
-    return this._locked(async () => {
-      const normalized = normalizeKey(key);
-      if (typeof text !== "string" || !text.trim()) {
-        throw new TypeError("记忆内容必须是非空字符串");
-      }
-      if (!MEMORY_TYPE_SET.has(type)) throw new TypeError("记忆类型无效");
-      if (!Number.isInteger(importance) || importance < 1 || importance > 10) {
-        throw new TypeError("记忆重要度必须是 1..10 的整数");
-      }
-      if (!MEMORY_SOURCE_SET.has(source)) throw new TypeError("记忆来源无效");
-      if (!Number.isInteger(maxMemories) || maxMemories < 1) {
-        throw new TypeError("maxMemories 必须是正整数");
-      }
-      const timestamp = isoTime(now, new Date().toISOString());
-      const content = text.trim().slice(0, 2000);
-      const normalizedText = normalizeMemoryText(content);
-      const next = clone(this.data);
-      const current = next.memories[normalized] ?? [];
+    const normalized = normalizeKey(key);
+    if (typeof text !== "string" || !text.trim()) {
+      throw new TypeError("记忆内容必须是非空字符串");
+    }
+    if (!MEMORY_TYPE_SET.has(type)) throw new TypeError("记忆类型无效");
+    if (!Number.isInteger(importance) || importance < 1 || importance > 10) {
+      throw new TypeError("记忆重要度必须是 1..10 的整数");
+    }
+    if (!MEMORY_SOURCE_SET.has(source)) throw new TypeError("记忆来源无效");
+    if (!Number.isInteger(maxMemories) || maxMemories < 1) {
+      throw new TypeError("maxMemories 必须是正整数");
+    }
+    const timestamp = isoTime(now, new Date().toISOString());
+    const content = text.trim().slice(0, 2000);
+    const normalizedText = normalizeMemoryText(content);
+    return this._enqueueMutation((data) => {
+      const current = data.memories[normalized] ?? [];
       const existingIndex = current.findIndex(
         (memory) => normalizeMemoryText(memory.text) === normalizedText,
       );
@@ -374,12 +472,18 @@ export class Store {
           updatedAt: timestamp,
           lastAccessedAt: timestamp,
         };
-        next.memories[normalized] = current.map((memory, index) =>
-          index === existingIndex ? updated : memory,
-        );
-        await atomicWriteJson(this.file, next);
-        this.data = next;
-        return clone(updated);
+        return {
+          data: {
+            ...data,
+            memories: {
+              ...data.memories,
+              [normalized]: current.map((memory, index) =>
+                index === existingIndex ? updated : memory,
+              ),
+            },
+          },
+          result: clone(updated),
+        };
       }
 
       const memory = {
@@ -392,45 +496,55 @@ export class Store {
         updatedAt: timestamp,
         lastAccessedAt: timestamp,
       };
-      next.memories[normalized] = pruneList([...current, memory], maxMemories);
-      await atomicWriteJson(this.file, next);
-      this.data = next;
-      return clone(memory);
+      return {
+        data: {
+          ...data,
+          memories: {
+            ...data.memories,
+            [normalized]: pruneList([...current, memory], maxMemories),
+          },
+        },
+        result: clone(memory),
+      };
     });
   }
 
   async forget(key, id) {
-    return this._locked(async () => {
-      const normalized = normalizeKey(key);
-      if (typeof id !== "string" || !id) {
-        throw new TypeError("记忆 id 必须是非空字符串");
-      }
-      const current = this.data.memories[normalized] ?? [];
+    const normalized = normalizeKey(key);
+    if (typeof id !== "string" || !id) {
+      throw new TypeError("记忆 id 必须是非空字符串");
+    }
+    return this._enqueueMutation((data) => {
+      const current = data.memories[normalized] ?? [];
       const next = current.filter((memory) => memory.id !== id);
-      if (next.length === current.length) return false;
-      const updated = clone(this.data);
-      updated.memories[normalized] = next;
-      await atomicWriteJson(this.file, updated);
-      this.data = updated;
-      return true;
+      if (next.length === current.length) return { data, result: false };
+      return {
+        data: {
+          ...data,
+          memories: { ...data.memories, [normalized]: next },
+        },
+        result: true,
+      };
     });
   }
 
   async clearMemories(key) {
-    return this._locked(async () => {
-      const normalized = normalizeKey(key);
-      const current = this.data.memories[normalized] ?? [];
-      if (!current.length) return 0;
-      const next = clone(this.data);
-      next.memories[normalized] = [];
-      await atomicWriteJson(this.file, next);
-      this.data = next;
-      return current.length;
+    const normalized = normalizeKey(key);
+    return this._enqueueMutation((data) => {
+      const current = data.memories[normalized] ?? [];
+      if (!current.length) return { data, result: 0 };
+      return {
+        data: {
+          ...data,
+          memories: { ...data.memories, [normalized]: [] },
+        },
+        result: current.length,
+      };
     });
   }
 
   async exportData() {
-    return this._locked(async () => clone(this.data));
+    return this._exclusive(async () => clone(this.data));
   }
 
   async _backupDataUnlocked(data, prefix = "store") {
@@ -454,7 +568,7 @@ export class Store {
 
   async importData(data) {
     const valid = validateData(data);
-    return this._locked(async () => {
+    return this._exclusive(async () => {
       const backupPath = await this._backupUnlocked();
       const previous = clone(this.data);
       try {
@@ -469,6 +583,6 @@ export class Store {
   }
 
   async backup() {
-    return this._locked(() => this._backupUnlocked());
+    return this._exclusive(() => this._backupUnlocked());
   }
 }

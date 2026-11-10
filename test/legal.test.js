@@ -5,11 +5,17 @@ import test from "node:test";
 
 import {
   LegalConfigurationError,
+  PROJECT_VERSION,
   resolveSourceUrl,
+  sourceReply,
   validateSourceUrl,
 } from "../src/legal.js";
 import { Engine } from "../src/engine.js";
 import { defaultConfig } from "../src/config.js";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const packageVersion = require("../package.json").version;
 
 function configured(overrides = {}) {
   const config = structuredClone(defaultConfig);
@@ -56,6 +62,14 @@ test("source URLs require a public absolute HTTPS host without credentials", () 
   assert.equal(
     resolveSourceUrl("https://code.example/alice", {}),
     "https://code.example/alice",
+  );
+});
+
+test("source command reports the package version", () => {
+  assert.equal(PROJECT_VERSION, packageVersion);
+  assert.match(
+    sourceReply("https://code.example/alice"),
+    new RegExp(`Source code for Alice ${packageVersion.replaceAll(".", "\\.")}`),
   );
 });
 

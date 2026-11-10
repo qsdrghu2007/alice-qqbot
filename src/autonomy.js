@@ -8,6 +8,11 @@ import {
   buildEnvironmentContext,
   fetchNanjingWeather,
 } from "./weather.js";
+import { buildPersonaPrompt } from "./persona.js";
+import {
+  isRecentPostVisibleToTarget,
+  qzoneVisibilityLabel,
+} from "./qzone.js";
 
 const MINUTE_MS = 60_000;
 const MIN_INTERVAL_MINUTES = 60;
@@ -39,6 +44,20 @@ function autonomyConfig(config) {
   };
 }
 
+function plannedQzoneTarget(config) {
+  const qzone = config?.qzone ?? {};
+  const configuredRight = qzone.ugc_right ?? qzone.ugcRight;
+  const configuredTargets = qzone.target_uins ?? qzone.targetUins ?? [];
+  return {
+    ugc_right: configuredRight === undefined || configuredRight === null
+      ? 4
+      : Number(configuredRight),
+    target_uins: Array.isArray(configuredTargets)
+      ? configuredTargets.map(String)
+      : configuredTargets,
+  };
+}
+
 function clampHour(value, fallback) {
   const number = Number(value);
   return Number.isInteger(number) && number >= 0 && number <= 23 ? number : fallback;
@@ -64,6 +83,29 @@ function safeError(error) {
     .replace(/(Authorization\s*:\s*Bearer\s+)[^\s,;]+/gi, "$1[redacted]")
     .replace(/((?:token|secret|apiKey)"\s*:\s*")[^"]+/gi, "$1[redacted]")
     .slice(0, 500);
+}
+
+function parsePostDecision(content) {
+  const raw = String(content ?? "").trim();
+  if (!raw) return null;
+  const json = raw
+    .replace(/^```(?:json)?\s*/iu, "")
+    .replace(/\s*```$/u, "");
+  let value;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (!value || typeof value.publish !== "boolean") return null;
+  const reason =
+    typeof value.reason === "string" ? value.reason.trim().slice(0, 200) : "";
+  if (!value.publish) {
+    return { publish: false, text: "", reason: reason || "ai_silence" };
+  }
+  const text = typeof value.text === "string" ? value.text.trim() : "";
+  if (!text) return null;
+  return { publish: true, text, reason };
 }
 
 function isQuietHour(hour, { start, end }) {
@@ -335,6 +377,34 @@ export class Autonomy {
       now: current,
       timeZone: autonomy.timezone,
     });
+    const plannedTarget = plannedQzoneTarget(config);
+    let recentPosts = [];
+    if (typeof this.qzone.recentPosts === "function") {
+      try {
+        recentPosts = await this.qzone.recentPosts({
+          limit: 5,
+          ugc_right: plannedTarget.ugc_right,
+          target_uins: plannedTarget.target_uins,
+        });
+      } catch (error) {
+        this.logger?.debug?.("Autonomy recent post lookup failed", safeError(error));
+      }
+    }
+    const recentPostContext = Array.isArray(recentPosts)
+      ? recentPosts
+          .filter(
+            (item) =>
+              typeof item?.text === "string" &&
+              item.text.trim() &&
+              isRecentPostVisibleToTarget(item, plannedTarget),
+          )
+          .slice(0, 5)
+          .map(
+            (item) =>
+              `- [${qzoneVisibilityLabel(item.ugc_right)}] ${item.text.trim().slice(0, 300)}`,
+          )
+          .join("\n")
+      : "";
 
     let generated;
     try {
@@ -344,16 +414,23 @@ export class Autonomy {
           {
             role: "system",
             content: [
-              config.ai.systemPrompt,
-              `你的名字是${config.persona?.name ?? "Alice"}。`,
+              buildPersonaPrompt(config),
               environment,
-              "环境信息只作背景，不要机械复述时间或逐项播报天气。按时间自然写：中午可以问大家吃饭没，下午问上课/上班，晚上提醒早睡，深夜关心休息；天气只作为氛围或关心，不要编造未提供的天气。",
-              "你正在为本人准备一条 QQ 空间动态；只返回正文，不虚构现实经历。",
-            ].join("\n\n"),
+              `本次计划发布范围：${qzoneVisibilityLabel(plannedTarget.ugc_right)}。历史动态素材已按该范围筛选，方括号只标明原说说的可见范围。`,
+              recentPostContext
+                ? `本人历史动态素材（只用于避免重复，不要照抄）：\n${recentPostContext}`
+                : "",
+              "你正在决定是否准备一条 QQ 空间动态。只能使用本次真实环境、用户明确配置的内容和上面列出的已筛选素材；不要读取或推测私聊、群聊或私人历史，也不要编造现实经历。没有自然话题时可以静默，不要为了固定问候或时段机械发帖。",
+              '只返回一个 JSON 对象：发布时返回 {"publish":true,"text":"正文"}；本次不发布时返回 {"publish":false,"reason":"简短原因"}。不要返回 JSON 以外的内容。',
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
           },
           { role: "user", content: autonomy.prompt },
         ],
         timeoutMs: 45_000,
+        maxTokens: 300,
+        thinking: "disabled",
       });
     } catch (error) {
       return this.#recordFailure("generation_failed", error);
@@ -364,9 +441,24 @@ export class Autonomy {
       return { skipped: true, reason: "stopped_after_generation" };
     }
 
-    const text = typeof generated?.content === "string" ? generated.content.trim() : "";
-    if (!text || text.length > 5000) {
-      return this.#recordFailure("invalid_generated_text", "生成内容为空或超过 5000 字");
+    const decision = parsePostDecision(generated?.content);
+    if (!decision) {
+      return this.#recordFailure("invalid_generated_text", "生成内容不是有效发布决策 JSON");
+    }
+    if (!decision.publish) {
+      this.state.lastRunAt = this.#now().toISOString();
+      this.state.lastStatus = "skipped";
+      this.state.lastError = null;
+      this.state.lastResult = {
+        status: "skipped",
+        reason: decision.reason,
+      };
+      await this.#writeState();
+      return { skipped: true, reason: "ai_silence" };
+    }
+    const text = decision.text;
+    if (text.length > 5000) {
+      return this.#recordFailure("invalid_generated_text", "生成正文超过 5000 字");
     }
     const latestConfig = await this.getConfig();
     const latestAutonomy = autonomyConfig(latestConfig);
@@ -394,7 +486,14 @@ export class Autonomy {
 
     let result;
     try {
-      result = await this.qzone.publish(text, { images: [] });
+      result = await this.qzone.publish(text, {
+        images: [],
+        autonomous: true,
+        ugc_right: plannedTarget.ugc_right,
+        target_uins: Array.isArray(plannedTarget.target_uins)
+          ? [...plannedTarget.target_uins]
+          : plannedTarget.target_uins,
+      });
     } catch (error) {
       return this.#recordFailure("publish_failed", error);
     }

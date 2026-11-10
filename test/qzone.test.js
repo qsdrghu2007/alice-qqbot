@@ -121,6 +121,141 @@ test('NapCat action is called with the confirmed payload and tid confirms succes
   assert.equal(stored.items[0].evidence, 'tid');
 });
 
+test('manual publishing does not require autoPublish while autonomous publishing does', async () => {
+  const root = await createRoot();
+  const onebot = onebotWith(async () => ({ data: { tid: 'tid-explicit' } }));
+  const publisher = new QzonePublisher({
+    root,
+    getConfig: () => makeConfig({ qzone: { autoPublish: false } }),
+    onebot,
+  });
+
+  const manual = await publisher.publish('人工明确发布', { explicitRequest: true });
+  const autonomous = await publisher.publish('自主发布', { autonomous: true });
+  const stored = await readOutbox(root);
+
+  assert.equal(manual.status, 'sent');
+  assert.equal(autonomous.status, 'blocked');
+  assert.equal(autonomous.reason, 'auto_publish_disabled');
+  assert.equal(onebot.calls.length, 1);
+  assert.equal(stored.items[0].source, 'explicit');
+  assert.equal(stored.items[1].source, 'autonomous');
+});
+
+test('recentPosts keeps confirmed text and preserves source visibility metadata', async () => {
+  const root = await createRoot();
+  const onebot = onebotWith(async (_action, params) => ({
+    data: { tid: `tid-${params.content}` },
+  }));
+  const publisher = new QzonePublisher({
+    root,
+    getConfig: () => makeConfig(),
+    onebot,
+  });
+
+  await publisher.publish('第一条公开内容');
+  await publisher.publish('第二条公开内容');
+  const recent = await publisher.recentPosts({ limit: 1 });
+
+  assert.deepEqual(
+    recent.map((item) => item.text),
+    ['第二条公开内容'],
+  );
+  assert.equal(recent[0].ugc_right, 1);
+  assert.deepEqual(recent[0].target_uins, []);
+  assert.equal(recent[0].visibility_label, '公开');
+  assert.equal(typeof recent[0].sentAt, 'string');
+  assert.equal(recent[0].providerId, 'tid-第二条公开内容');
+});
+
+test('recentPosts filters visibility conservatively and ignores unknown old records', async () => {
+  const root = await createRoot();
+  let nextTid = 0;
+  const onebot = onebotWith(async () => ({
+    data: { tid: `tid-visibility-${nextTid += 1}` },
+  }));
+  const publisher = new QzonePublisher({
+    root,
+    getConfig: () => makeConfig({ policy: { maxActionsPerHour: 20 } }),
+    onebot,
+  });
+
+  await publisher.publish('公开素材', { ugc_right: 1 });
+  await publisher.publish('好友素材', { ugc_right: 4 });
+  await publisher.publish('自己素材', { ugc_right: 64 });
+  await publisher.publish('受限16素材', {
+    ugc_right: 16,
+    target_uins: ['111111', '222222'],
+  });
+  await publisher.publish('受限16另一组', {
+    ugc_right: 16,
+    target_uins: ['111111', '333333'],
+  });
+  await publisher.publish('受限128素材', {
+    ugc_right: 128,
+    target_uins: ['333333', '444444'],
+  });
+  const stored = await readOutbox(root);
+  stored.items.push({
+    id: 'legacy-without-visibility',
+    fingerprint: '旧记录缺范围',
+    text: '旧记录缺范围',
+    images: [],
+    state: 'sent',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    providerId: 'tid-legacy',
+  });
+  await writeFile(
+    path.join(root, 'data', 'qzone-outbox.json'),
+    `${JSON.stringify(stored, null, 2)}\n`,
+  );
+
+  const textsFor = async (options) =>
+    new Set((await publisher.recentPosts(options)).map((item) => item.text));
+
+  assert.deepEqual(await textsFor({ limit: 10 }), new Set([
+    '公开素材',
+    '好友素材',
+    '自己素材',
+    '受限16素材',
+    '受限16另一组',
+    '受限128素材',
+  ]));
+  assert.deepEqual(await textsFor({ limit: 10, ugc_right: 1 }), new Set(['公开素材']));
+  assert.deepEqual(
+    await textsFor({ limit: 10, ugc_right: 4 }),
+    new Set(['公开素材', '好友素材']),
+  );
+  assert.deepEqual(
+    await textsFor({ limit: 10, ugc_right: 64 }),
+    new Set([
+      '公开素材',
+      '好友素材',
+      '自己素材',
+      '受限16素材',
+      '受限16另一组',
+      '受限128素材',
+    ]),
+  );
+  assert.deepEqual(
+    await textsFor({
+      limit: 10,
+      ugc_right: 16,
+      target_uins: ['222222', '111111', '222222'],
+    }),
+    new Set(['公开素材', '受限16素材']),
+  );
+  assert.deepEqual(
+    await textsFor({
+      limit: 10,
+      ugc_right: 128,
+      target_uins: ['444444', '333333'],
+    }),
+    new Set(['公开素材', '受限128素材']),
+  );
+});
+
 test('onSent runs only for a confirmed successful publish', async () => {
   const root = await createRoot();
   const onebot = onebotWith(async () => ({ data: { tid: 'tid-hook' } }));

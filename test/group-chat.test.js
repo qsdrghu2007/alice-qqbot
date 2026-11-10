@@ -8,9 +8,9 @@ import test from "node:test";
 import { defaultConfig } from "../src/config.js";
 import { Engine } from "../src/engine.js";
 import {
+  activityWaitMs,
   GroupChatManager,
   groupStateKey,
-  proactiveWaitMs,
 } from "../src/group-chat.js";
 
 const tick = async (rounds = 20) => {
@@ -31,6 +31,7 @@ class MemoryStore {
     this.root = process.cwd();
     this.histories = new Map();
     this.memoryLists = new Map();
+    this.memoryReads = 0;
   }
 
   async history(key) {
@@ -42,6 +43,7 @@ class MemoryStore {
   }
 
   async memories(key) {
+    this.memoryReads += 1;
     return [...(this.memoryLists.get(key) ?? [])];
   }
 }
@@ -52,6 +54,7 @@ function groupConfig(overrides = {}) {
   config.ai.apiKey = "test-key";
   config.groupChat = {
     ...config.groupChat,
+    enabled: true,
     quietHours: { start: 10, end: 10 },
     ...(overrides.groupChat ?? {}),
   };
@@ -152,27 +155,32 @@ async function managerFixture(t, {
   };
 }
 
-test("proactive wait uses total group members and never substitutes zero", () => {
-  assert.equal(proactiveWaitMs(groupConfig(), 1), 31200);
-  assert.equal(proactiveWaitMs(groupConfig(), 10), 42000);
-  assert.equal(proactiveWaitMs(groupConfig(), 0), null);
-  assert.equal(proactiveWaitMs(groupConfig(), undefined), null);
+test("activity wait shortens for active conversations and follows participation level", () => {
+  const config = groupConfig();
+  assert.equal(activityWaitMs(config, { speakers: 1, messages: 1 }), 6000);
+  assert.ok(
+    activityWaitMs(config, { speakers: 4, messages: 8 }) <
+      activityWaitMs(config, { speakers: 1, messages: 1 }),
+  );
+  config.groupChat.activityLevel = "low";
+  assert.equal(activityWaitMs(config, { speakers: 1, messages: 1 }), 8100);
+  config.groupChat.activityLevel = "high";
+  assert.equal(activityWaitMs(config, { speakers: 1, messages: 1 }), 4800);
 });
 
-test("natural group candidate waits by member count then makes one structured decision", async (t) => {
+test("natural group candidate waits by activity then makes one structured decision", async (t) => {
   const delivered = [];
   const fixture = await managerFixture(t, {
-    memberCount: 7,
     deliver: async (event) => {
       delivered.push(event);
       return { status: "sent", sentSegments: [{ text: "这个我知道一点。" }] };
     },
   });
-  fixture.config.groupChat.defaultMode = "active";
+  fixture.config.groupChat.activityLevel = "high";
   const result = await fixture.manager.route(groupEvent());
   assert.equal(result.explicit, false);
   await tick();
-  assert.equal(fixture.timers.values()[0].ms, 30000 + 7 * 1200);
+  assert.equal(fixture.timers.values()[0].ms, 4800);
   fixture.timers.runNext();
   await fixture.manager.waitForIdle();
   assert.equal(delivered.length, 1);
@@ -184,12 +192,14 @@ test("natural group candidate waits by member count then makes one structured de
   );
 });
 
-test("missing member count skips only proactive work and explicit bot-name summons still work", async (t) => {
+test("disabled group participation ignores both explicit and ambient messages", async (t) => {
   const delivered = [];
-  const config = groupConfig({ persona: { name: "小夏" } });
+  const config = groupConfig({
+    groupChat: { enabled: false },
+    persona: { name: "小夏" },
+  });
   const fixture = await managerFixture(t, {
     config,
-    memberCount: new Error("count unavailable"),
     deliver: async (event) => {
       delivered.push(event);
       return { status: "sent", sentSegments: [{ text: "在。" }] };
@@ -199,8 +209,8 @@ test("missing member count skips only proactive work and explicit bot-name summo
   const explicit = await fixture.manager.route(
     groupEvent({ id: "summon", text: "小夏，这个在吗？" }),
   );
-  assert.equal(explicit.explicit, true);
-  assert.equal(explicit.reason, "name");
+  assert.equal(explicit.explicit, false);
+  assert.equal(explicit.reason, "disabled");
   assert.equal(fixture.getGroupInfoCalls(), 0);
 
   await fixture.manager.route(groupEvent({ id: "ambient", userId: "10002" }));
@@ -237,9 +247,14 @@ test("a sent explicit reply arms a no-wait continuation for the addressed user",
   assert.equal(delivered.length, 1);
   assert.equal(delivered[0].groupDecision.kind, "continuation");
   assert.equal(fixture.getGroupInfoCalls(), 0);
+  const repeated = await fixture.manager.route(
+    groupEvent({ id: "explicit-again", text: "Alice 接着说" }),
+  );
+  assert.equal(repeated.explicit, true);
+  assert.equal(repeated.reason, "name");
 });
 
-test("another member joining after a sent reply diverts the addressed-user continuation", async (t) => {
+test("a parallel interjection does not take over the active thread", async (t) => {
   const delivered = [];
   const fixture = await managerFixture(t, {
     deliver: async (event) => {
@@ -261,12 +276,37 @@ test("another member joining after a sent reply diverts the addressed-user conti
     groupEvent({ id: "same", userId: "10001", text: "那你说详细点" }),
   );
   await fixture.manager.waitForIdle();
-  assert.equal(delivered.length, 0);
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].groupDecision.kind, "continuation");
+});
+
+test("a related join uses the continuation path without changing its sender", async (t) => {
+  const delivered = [];
+  const fixture = await managerFixture(t, {
+    deliver: async (event) => {
+      delivered.push(event);
+      return { status: "suppressed" };
+    },
+  });
+  await fixture.manager.route(
+    groupEvent({ id: "call", userId: "10001", text: "Alice 这个游戏怎样联机" }),
+  );
+  await fixture.manager.recordDelivery(
+    groupEvent({ id: "call", userId: "10001", text: "Alice 这个游戏怎样联机" }),
+    { status: "sent", sentSegments: [{ text: "先加好友再进房间。" }] },
+  );
+  await fixture.manager.route(
+    groupEvent({ id: "joined", userId: "10002", text: "联机要先加好友吗" }),
+  );
+  await fixture.manager.waitForIdle();
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].userId, "10002");
+  assert.equal(delivered[0].groupDecision.kind, "continuation");
 });
 
 test("a public group memory can create a candidate without relying on keyword stop lists", async (t) => {
   const fixture = await managerFixture(t, {
-    config: groupConfig({ groupChat: { defaultMode: "active" } }),
+    config: groupConfig({ groupChat: { activityLevel: "high" } }),
     memberCount: 5,
   });
   fixture.store.memoryLists.set(
@@ -284,7 +324,48 @@ test("a public group memory can create a candidate without relying on keyword st
     groupEvent({ id: "memory-anchor", text: "昨天那个深海探险" }),
   );
   await tick();
-  assert.equal(fixture.timers.values()[0].ms, 30000 + 5 * 1200);
+  assert.equal(fixture.timers.values()[0].ms, 4800);
+});
+
+test("the memory switch controls group memory reads and candidate evidence", async (t) => {
+  const fixture = await managerFixture(t, {
+    config: groupConfig({ groupChat: { activityLevel: "high" } }),
+  });
+  fixture.store.memoryLists.set(
+    JSON.stringify(["group-memory", "onebot", "20002"]),
+    [
+      {
+        id: "m1",
+        type: "fact",
+        importance: 8,
+        text: "本群约定周末一起玩深海探险",
+      },
+    ],
+  );
+  const anchor = groupEvent({ id: "memory-switch", text: "昨天那个深海探险" });
+  const state = fixture.manager._state(groupStateKey("20002"));
+  const settings = fixture.config.groupChat;
+  const before = fixture.store.memoryReads;
+  const enabled = await fixture.manager._scoreCandidate(
+    anchor,
+    fixture.config,
+    settings,
+    state,
+  );
+  assert.equal(fixture.store.memoryReads, before + 1);
+  assert.ok(enabled.supportSignals.includes("memory"));
+
+  const disabledConfig = structuredClone(fixture.config);
+  disabledConfig.memory.enabled = false;
+  const disabled = await fixture.manager._scoreCandidate(
+    anchor,
+    disabledConfig,
+    settings,
+    state,
+  );
+  assert.equal(fixture.store.memoryReads, before + 1);
+  assert.equal(disabled.supportSignals.includes("memory"), false);
+  assert.equal(disabled.score, Number((enabled.score - 0.16).toFixed(3)));
 });
 
 test("generic and human-directed questions do not create proactive candidates", async (t) => {
@@ -307,7 +388,7 @@ test("generic and human-directed questions do not create proactive candidates", 
 
 test("a standalone substantive question needs topic, memory, interest, or relationship evidence", async (t) => {
   const fixture = await managerFixture(t, {
-    config: groupConfig({ groupChat: { defaultMode: "active" } }),
+    config: groupConfig({ groupChat: { activityLevel: "high" } }),
     relationshipLevel: 0,
   });
   await fixture.manager.route(groupEvent({ id: "unsupported-question" }));
@@ -316,9 +397,9 @@ test("a standalone substantive question needs topic, memory, interest, or relati
   assert.equal(fixture.getGroupInfoCalls(), 0);
 });
 
-test("a safe private preference category can support a relevant group question", async (t) => {
+test("private preferences do not create or support group participation", async (t) => {
   const fixture = await managerFixture(t, {
-    config: groupConfig({ groupChat: { defaultMode: "active" } }),
+    config: groupConfig({ groupChat: { activityLevel: "high" } }),
     relationshipLevel: 0,
     memberCount: 5,
   });
@@ -335,14 +416,15 @@ test("a safe private preference category can support a relevant group question",
   );
   await fixture.manager.route(groupEvent({ id: "private-interest" }));
   await tick();
-  assert.equal(fixture.timers.values()[0].ms, 30000 + 5 * 1200);
+  await fixture.manager.waitForIdle();
+  assert.equal(fixture.timers.values().length, 0);
 });
 
 test("another member's unrelated messages do not reset Alice's no-response exit timer", async (t) => {
   const fixture = await managerFixture(t, {
     config: groupConfig({
       groupChat: {
-        defaultMode: "mention",
+        allowUnprompted: false,
         noResponseMinutes: 2,
         cooldownMinutes: 4,
       },
@@ -394,7 +476,7 @@ test("same-user continuation before an explicit reply is sent joins the explicit
 
 test("busy group suppresses proactive participation while related replies cancel a stale candidate", async (t) => {
   const busy = await managerFixture(t, {
-    config: groupConfig({ groupChat: { defaultMode: "natural" } }),
+    config: groupConfig({ groupChat: { activityLevel: "medium" } }),
   });
   for (let index = 0; index < 7; index += 1) {
     await busy.manager.route(
@@ -415,7 +497,7 @@ test("busy group suppresses proactive participation while related replies cancel
   assert.equal(busy.timers.values().length, 0);
 
   const cancellation = await managerFixture(t, {
-    config: groupConfig({ groupChat: { defaultMode: "active" } }),
+    config: groupConfig({ groupChat: { activityLevel: "high" } }),
   });
   await cancellation.manager.route(groupEvent({ id: "anchor" }));
   await tick();
@@ -434,7 +516,7 @@ test("cooldown survives explicit summons and model budget records silent outcome
   let modelDeliveries = 0;
   const config = groupConfig({
     groupChat: {
-      defaultMode: "active",
+      activityLevel: "high",
       budgetPerHour: 1,
       maxConsecutiveMessages: 3,
       cooldownMinutes: 4,
@@ -474,6 +556,34 @@ test("cooldown survives explicit summons and model budget records silent outcome
   assert.ok(cooldown > base);
   await fixture.manager.route(groupEvent({ id: "explicit", text: "Alice 在吗" }));
   assert.equal(state.cooldownUntil, cooldown);
+});
+
+test("proactive and continuation budgets stay separate and share a total cap", async (t) => {
+  const config = groupConfig({
+    groupChat: {
+      budgetPerHour: 1,
+      continuationBudgetPerHour: 1,
+      totalBudgetPerHour: 2,
+    },
+  });
+  const fixture = await managerFixture(t, { config });
+  const state = fixture.manager._state(groupStateKey("20002"));
+  const now = fixture.manager.now();
+  const settings = config.groupChat;
+  fixture.manager._recordBudgetCall(state, "proactive", now);
+  assert.equal(state.proactiveCalls.length, 1);
+  assert.equal(state.continuationCalls.length, 0);
+  assert.equal(fixture.manager._budgetAvailable(state, settings, now, "proactive"), false);
+  assert.equal(fixture.manager._budgetAvailable(state, settings, now, "continuation"), true);
+
+  fixture.manager._recordBudgetCall(state, "continuation", now);
+  assert.equal(state.modelCalls.length, 2);
+  assert.equal(fixture.manager._budgetAvailable(state, settings, now, "continuation"), false);
+  assert.equal(fixture.manager._budgetAvailable(state, settings, now, "proactive"), false);
+
+  const before = [...state.modelCalls];
+  await fixture.manager.route(groupEvent({ id: "free-explicit", text: "Alice 在吗" }));
+  assert.deepEqual(state.modelCalls, before);
 });
 
 test("group decision engine uses one model call and skips review, tools, memory extraction, and history", async (t) => {
@@ -567,11 +677,12 @@ test("group decision engine uses one model call and skips review, tools, memory 
   assert.deepEqual(chatCalls[0].tools, []);
   assert.equal(chatCalls[0].responseFormat.type, "json_object");
   assert.equal(chatCalls[0].thinking, "disabled");
+  assert.match(chatCalls[0].messages[0].content, /【非点名群聊候选决策】/u);
   assert.match(chatCalls[0].messages.at(-1).content, /本群短期现场/u);
   assert.match(chatCalls[0].messages.at(-1).content, /本群公开约定周末一起玩深海探险/u);
-  assert.match(chatCalls[0].messages.at(-1).content, /非敏感兴趣类别.*游戏/u);
   assert.doesNotMatch(chatCalls[0].messages.at(-1).content, /赛博朋克2077/u);
   assert.doesNotMatch(chatCalls[0].messages.at(-1).content, /绝不应进入群的私聊原文/u);
+  assert.doesNotMatch(chatCalls[0].messages.at(-1).content, /兴趣类别|私聊偏好/u);
   assert.doesNotMatch(chatCalls[0].messages.at(-1).content, /私聊原文|绝不应进入群/u);
   assert.equal(
     (
