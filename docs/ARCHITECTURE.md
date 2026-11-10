@@ -64,7 +64,7 @@ src/server.js ──> src/engine.js ──> src/ai.js
 | `src/qzone-links.js` | 空间链接、JSON/XML 分享卡片解析和 owner/tid 提取。 |
 | `src/qzone-comments.js` | 空间评论轮询、首次基线、评论跟踪、AI 判断、频率限制和状态持久化。 |
 | `src/autonomy.js` | 定时发帖、启动补发、静默时段、状态持久化、天气/时间提示。 |
-| `src/weather.js` | Open-Meteo 南京当前天气解析、WMO 码映射、本地时间/时段格式化。 |
+| `src/weather.js` | Open-Meteo 南京当前天气解析、WMO 码映射、本地时间/时段格式化，以及可分别关闭的天气/时间环境上下文。 |
 | `adapters/onebot.js` | OneBot WebSocket、发送、点赞、空间扩展、风险/权限错误。 |
 | `adapters/qq.js` | 官方 QQ 机器人，仅文本。 |
 | `adapters/shared.js` | CQ/数组消息解析、附件元数据、脱敏、策略、回复段。 |
@@ -285,8 +285,8 @@ QQ 空间只有收到 `send_qzone_msg` 的 `data.tid` 才判定 `sent`；未知�
 - 启动时读取状态；`nextAt` 已过期则保留并标记补发，不按错过次数循环，只发 1 条。
 - 启动补发忽略安静时段；正常运行中落到安静时段则写入 `quietDeferred` 并顺延，重启不会误判为补发。
 - 补发或正常发布开始时先把 `nextAt` 设为当前时间 + 间隔，再生成内容；失败按该计划等待下一次。
-- 生成前调用 `src/weather.js` 获取南京 Open-Meteo 当前天气；失败只记 debug，不阻塞发布，提示词中禁止编造天气。
-- 天气、时间、星期和时段作为系统提示词背景，要求自然融入，不机械打印时间或逐项播报天气。
+- 生成前在 `autonomy.includeWeather` 开启时调用 `src/weather.js` 获取南京 Open-Meteo 当前天气；关闭时跳过请求。失败只记 debug，不阻塞发布，提示词中禁止编造天气。
+- 天气、时间、星期和时段按两个开关分别作为系统提示词背景，要求自然融入，不机械打印时间或逐项播报天气；关闭时间只移除生成上下文，调度和安静时段仍使用当前时间。
 - `FollowUpScheduler` 每分钟 tick 时触发 `autonomy.tick()`；Autonomy 自身也有分钟定时器和 `inflight` 串行保护。
 
 ## 安全边界

@@ -226,7 +226,7 @@ const elements = {
     "#groupChatTotalBudgetPerHour",
   ),
   groupChatHistorySearchHours: document.querySelector("#groupChatHistorySearchHours"),
-  groupChatCooldownMinutes: document.querySelector("#groupChatCooldownMinutes"),
+  groupChatCooldownSeconds: document.querySelector("#groupChatCooldownSeconds"),
   replyDelayEnabled: document.querySelector("#replyDelayEnabled"),
   replyDelayTypingIndicator: document.querySelector("#replyDelayTypingIndicator"),
   replyDelayBaseMs: document.querySelector("#replyDelayBaseMs"),
@@ -290,6 +290,8 @@ const elements = {
   autonomyEnabled: document.querySelector("#autonomyEnabled"),
   autonomyIntervalMinutes: document.querySelector("#autonomyIntervalMinutes"),
   autonomyPrompt: document.querySelector("#autonomyPrompt"),
+  autonomyIncludeWeather: document.querySelector("#autonomyIncludeWeather"),
+  autonomyIncludeTime: document.querySelector("#autonomyIncludeTime"),
   autonomyQuietStart: document.querySelector("#autonomyQuietStart"),
   autonomyQuietEnd: document.querySelector("#autonomyQuietEnd"),
   autonomyTimezone: document.querySelector("#autonomyTimezone"),
@@ -1042,7 +1044,7 @@ function fillConfigForm(config) {
     [elements.groupChatContinuationBudgetPerHour, "continuationBudgetPerHour", 12],
     [elements.groupChatTotalBudgetPerHour, "totalBudgetPerHour", 18],
     [elements.groupChatHistorySearchHours, "historySearchHours", 24],
-    [elements.groupChatCooldownMinutes, "cooldownMinutes", 4],
+    [elements.groupChatCooldownSeconds, "cooldownSeconds", 240],
   ]) {
     element.value = String(
       firstDefined(readPath(config, `groupChat.${key}`), fallback) ?? "",
@@ -1171,6 +1173,10 @@ function fillConfigForm(config) {
   elements.autonomyPrompt.value = String(
     firstDefined(readPath(config, "autonomy.prompt"), "") || "",
   );
+  elements.autonomyIncludeWeather.checked =
+    readPath(config, "autonomy.includeWeather") !== false;
+  elements.autonomyIncludeTime.checked =
+    readPath(config, "autonomy.includeTime") !== false;
   elements.autonomyQuietStart.value = String(
     firstDefined(readPath(config, "autonomy.quietHours.start"), "") ?? "",
   );
@@ -1391,7 +1397,7 @@ function collectConfigPatch() {
       ),
       totalBudgetPerHour: numberValue(elements.groupChatTotalBudgetPerHour),
       historySearchHours: numberValue(elements.groupChatHistorySearchHours),
-      cooldownMinutes: numberValue(elements.groupChatCooldownMinutes),
+      cooldownSeconds: numberValue(elements.groupChatCooldownSeconds),
     },
     replyDelay: {
       enabled: elements.replyDelayEnabled.checked,
@@ -1452,6 +1458,8 @@ function collectConfigPatch() {
       enabled: elements.autonomyEnabled.checked,
       intervalMinutes: numberValue(elements.autonomyIntervalMinutes),
       prompt: elements.autonomyPrompt.value,
+      includeWeather: elements.autonomyIncludeWeather.checked,
+      includeTime: elements.autonomyIncludeTime.checked,
       quietHours: {
         start: numberValue(elements.autonomyQuietStart),
         end: numberValue(elements.autonomyQuietEnd),

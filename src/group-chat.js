@@ -851,7 +851,7 @@ export class GroupChatManager {
       event.groupDecision ||
       state.consecutiveMessages >= settings.maxConsecutiveMessages
     ) {
-      state.cooldownUntil = now + settings.cooldownMinutes * 60 * 1000;
+      state.cooldownUntil = now + settings.cooldownSeconds * 1000;
     }
     state.updatedAt = now;
     this._threads.set(event.groupId, {
@@ -904,7 +904,7 @@ export class GroupChatManager {
   async _enterCooldown(groupId) {
     const settings = mergeGroupConfig(this.getConfig());
     const state = this._state(groupStateKey(groupId));
-    state.cooldownUntil = this.now() + settings.cooldownMinutes * 60 * 1000;
+    state.cooldownUntil = this.now() + settings.cooldownSeconds * 1000;
     state.consecutiveMessages = settings.maxConsecutiveMessages;
     state.updatedAt = this.now();
     const thread = this._threads.get(groupId);

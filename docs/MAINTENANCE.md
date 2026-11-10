@@ -181,7 +181,9 @@ releases/                    历史发布包
 | `onebot.token` | 空 | OneBot 访问令牌。 |
 | `autonomy.enabled` | `false` | 定时空间开关。 |
 | `autonomy.intervalMinutes` | `240` | 最小 60。 |
-| `autonomy.prompt` | 文本 | 生成提示；时间和南京天气由系统自动注入。 |
+| `autonomy.prompt` | 文本 | 生成提示；时间和南京天气按开关注入。 |
+| `autonomy.includeWeather` | `true` | 是否请求并向生成内容注入南京天气；关闭后跳过天气请求。 |
+| `autonomy.includeTime` | `true` | 是否向生成内容注入日期、星期和时段；关闭不影响调度和安静时段。 |
 | `autonomy.quietHours` | `23..8` | 正常运行时的静默时段；启动补发忽略该时段。 |
 | `autonomy.timezone` | `Asia/Shanghai` | 静默时段和提示时间时区。 |
 | `policy.autoActions` | `true` | 是否允许外发操作。 |
@@ -271,7 +273,7 @@ releases/                    历史发布包
 | `groupChat.continuationBudgetPerHour` | `12` | 每群每小时续聊预算；0 表示不限。 |
 | `groupChat.totalBudgetPerHour` | `18` | 每群每小时主动与续聊总预算；0 表示不限。明确 @ 不占这组预算。 |
 | `groupChat.historySearchHours` | `24` | 仅群聊 recall 的历史搜索窗口，1..168 小时；私聊固定 7 天。 |
-| `groupChat.cooldownMinutes` | `4` | 主动退场冷却。 |
+| `groupChat.cooldownSeconds` | `240` | 普通非点名参与退场冷却，1..86400 秒。旧 `cooldownMinutes` 配置会按分钟换算。 |
 | `groupChat.maxConsecutiveMessages` | `3` | Alice 连续群回复上限。 |
 | `groupChat.noResponseMinutes` | `2` | Alice 发言后无人接话的退场阈值。 |
 | `groupChat.sceneMessages` | `12` | 群短期现场最多条数，4..40。 |
@@ -852,7 +854,7 @@ node --check public/app.js
 - 调度、启动补发、安静时段：`src/autonomy.js` 的 `init`、`start`、`reconcile`、`#tickNow`。
 - 状态文件：`data/autonomy.json`，重点字段 `nextAt`、`quietDeferred`、`lastStatus`、`lastResult`。
 - 启动补发只发 1 条，忽略安静时段；正常运行中的安静时段仍顺延，修改时不要混淆这两个分支。
-- 天气/时间：`src/weather.js` 的 `fetchNanjingWeather`、`buildEnvironmentContext`；默认南京 Open-Meteo，无需 Key。
+- 天气/时间：`src/weather.js` 的 `fetchNanjingWeather`、`buildEnvironmentContext`；默认南京 Open-Meteo，无需 Key；`autonomy.includeWeather/includeTime` 可分别关闭天气请求和 AI 时间上下文。
 - 提示词要求自然融入时间/天气，不要机械播报；天气失败仍发布，不编造天气。
 - 回访同步：`src/follow-up.js` 的 `onTick` 和 `src/index.js` 接线。
 - 修改后运行 `test/autonomy.test.js`、`test/weather.test.js`、`test/follow-up.test.js`，重启 Alice，并检查网页“定时空间”的下一次时间和 `data/autonomy.json`。

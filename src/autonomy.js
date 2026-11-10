@@ -33,6 +33,8 @@ function autonomyConfig(config) {
       typeof raw.prompt === "string" && raw.prompt.trim()
         ? raw.prompt.trim()
         : DEFAULT_PROMPT,
+    includeWeather: raw.includeWeather !== false,
+    includeTime: raw.includeTime !== false,
     quietHours: {
       start: clampHour(raw.quietHours?.start, 23),
       end: clampHour(raw.quietHours?.end, 8),
@@ -363,19 +365,23 @@ export class Autonomy {
     await this.#writeState();
 
     let weather = null;
-    try {
-      weather = await this.weather({ fetchImpl: this.fetchImpl, now: () => current });
-    } catch (error) {
+    if (autonomy.includeWeather) {
       try {
-        this.logger?.debug?.("Autonomy weather failed", safeError(error));
-      } catch {
-        // Weather must never block publishing.
+        weather = await this.weather({ fetchImpl: this.fetchImpl, now: () => current });
+      } catch (error) {
+        try {
+          this.logger?.debug?.("Autonomy weather failed", safeError(error));
+        } catch {
+          // Weather must never block publishing.
+        }
       }
     }
     const environment = buildEnvironmentContext({
       weather,
       now: current,
       timeZone: autonomy.timezone,
+      includeWeather: autonomy.includeWeather,
+      includeTime: autonomy.includeTime,
     });
     const plannedTarget = plannedQzoneTarget(config);
     let recentPosts = [];

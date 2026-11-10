@@ -131,7 +131,7 @@ export const groupChatDefaults = Object.freeze({
   continuationBudgetPerHour: 12,
   totalBudgetPerHour: 18,
   historySearchHours: 24,
-  cooldownMinutes: 4,
+  cooldownSeconds: 240,
   maxConsecutiveMessages: 3,
   noResponseMinutes: 2,
   sceneMessages: 12,
@@ -167,6 +167,8 @@ export const defaultConfig = deepFreeze({
     enabled: false,
     intervalMinutes: 240,
     prompt: "写一条自然简短的动态，不编造真实经历。",
+    includeWeather: true,
+    includeTime: true,
     quietHours: {
       start: 23,
       end: 8,
@@ -370,6 +372,11 @@ function validateConfig(config) {
   }
   if (typeof config.autonomy.prompt !== "string") {
     throw new TypeError("autonomy.prompt 必须是字符串");
+  }
+  for (const key of ["includeWeather", "includeTime"]) {
+    if (typeof config.autonomy[key] !== "boolean") {
+      throw new TypeError(`autonomy.${key} 必须是布尔值`);
+    }
   }
   if (
     !isPlainObject(config.autonomy.quietHours) ||
@@ -779,7 +786,7 @@ function validateConfig(config) {
     ["continuationBudgetPerHour", 0, 60],
     ["totalBudgetPerHour", 0, 60],
     ["historySearchHours", 1, 168],
-    ["cooldownMinutes", 1, 1440],
+    ["cooldownSeconds", 1, 86400],
     ["maxConsecutiveMessages", 1, 10],
     ["noResponseMinutes", 1, 60],
     ["sceneMessages", 4, 40],
@@ -837,6 +844,19 @@ function migrateLegacyDefaultPrompt(config) {
   return config;
 }
 
+function migrateLegacyGroupCooldown(config, source) {
+  if (!isPlainObject(config.groupChat)) return config;
+  const legacy = source?.groupChat?.cooldownMinutes;
+  if (source?.groupChat?.cooldownSeconds === undefined && legacy !== undefined) {
+    if (!Number.isInteger(legacy) || legacy < 1 || legacy > 1440) {
+      throw new TypeError("groupChat.cooldownMinutes 必须是 1..1440 的整数");
+    }
+    config.groupChat.cooldownSeconds = legacy * 60;
+  }
+  delete config.groupChat.cooldownMinutes;
+  return config;
+}
+
 function configPath(root) {
   return path.join(root, CONFIG_FILE);
 }
@@ -848,8 +868,11 @@ async function readConfig(root) {
     const parsed = JSON.parse(raw);
     if (!isPlainObject(parsed)) throw new TypeError("配置文件必须是 JSON 对象");
     return validateConfig(
-      migrateLegacyDefaultPrompt(
-        preserveBlankSecrets(deepMerge(defaultConfig, parsed), defaultConfig),
+      migrateLegacyGroupCooldown(
+        migrateLegacyDefaultPrompt(
+          preserveBlankSecrets(deepMerge(defaultConfig, parsed), defaultConfig),
+        ),
+        parsed,
       ),
     );
   } catch (error) {
@@ -886,7 +909,10 @@ export async function saveConfig(root, patch) {
       merged.groupChat.modes = clone(patch.groupChat.modes);
     }
     const next = validateConfig(
-      migrateLegacyDefaultPrompt(preserveBlankSecrets(merged, previous)),
+      migrateLegacyGroupCooldown(
+        migrateLegacyDefaultPrompt(preserveBlankSecrets(merged, previous)),
+        patch,
+      ),
     );
     await atomicWrite(configPath(resolvedRoot), `${JSON.stringify(next, null, 2)}\n`);
     return next;

@@ -2,7 +2,7 @@
 
 Alice 是一个优先在本机运行的 QQ 陪伴机器人，提供网页控制台、聊天历史与长期记忆、人格与模型配置、本地表情库、联网搜索、自主发帖，以及通过 OneBot/NapCat 连接个人 QQ 的聊天、表情、点赞和 QQ 空间发布能力。
 
-当前版本为 v0.6.0，升级项和验证边界见 [发布说明](docs/RELEASE-v0.6.0.md)。
+当前版本为 v0.6.1，升级项和验证边界见 [发布说明](docs/RELEASE-v0.6.1.md)。
 
 Alice 自己启动的 HTTP 服务只监听 `127.0.0.1`，默认不开放到局域网或公网。项目支持 Windows 和 macOS，没有构建步骤，唯一必需的运行依赖是 `ws`。NapCat 是独立进程，它的 WebUI 监听地址由 NapCat 自己的 `webui.json` 决定，详见 [NapCat 与 OneBot](#napcat-与-onebot)。
 
@@ -200,7 +200,7 @@ npm test
 | `ai` | `baseUrl`、`apiKey`、`model`、`systemPrompt`、`temperature`、`reasoningEffort`、`historyMessages` | AI 服务与人格。`reasoningEffort` 可选 `low` / `high` / `max`，默认 `high`。DeepSeek 思考模式默认开启；思考模式下 `temperature` 不生效。`historyMessages` 控制直接注入的已提交 user/assistant 消息条数，默认 30；0 表示当前保留的全部历史，每会话最多 80 条，不包含未提交草稿或全部旁观群消息。 |
 | `onebot` | `enabled`、`url`、`token` | 连接 NapCat 的 OneBot WebSocket，默认 `ws://127.0.0.1:3001`。 |
 | `qq` | `enabled`、`appId`、`secret`、`sandbox` | 官方 QQ 机器人，仅文本。 |
-| `autonomy` | `enabled`、`intervalMinutes`、`prompt`、`quietHours`、`timezone` | 定时 QQ 空间动态，间隔最少 60 分钟。启动时发现已过期会补发一条；正常运行中的安静时段仍顺延。 |
+| `autonomy` | `enabled`、`intervalMinutes`、`prompt`、`includeWeather`、`includeTime`、`quietHours`、`timezone` | 定时 QQ 空间动态，间隔最少 60 分钟。启动时发现已过期会补发一条；正常运行中的安静时段仍顺延。`includeWeather` 和 `includeTime` 默认开启；关闭天气时不请求或注入天气，关闭时间时仍按时间调度，但不向生成内容提供日期、星期或时段。 |
 | `policy` | `autoActions`、`paused`、`allowedUsers`、`allowedGroups`、`actionUsers`、`cooldownMs`、`maxActionsPerHour` | 会话允许名单、外发操作权限和频率限制；`allowedUsers` / `allowedGroups` 为空表示不限制，`actionUsers` 为空表示没有 QQ 用户可触发外发操作（本机控制台例外）。`cooldownMs` 只限制外发操作，不丢弃快速连发的入站消息。 |
 | `qzone` | `enabled`、`autoPublish`、`headless` | `enabled` 是空间能力总开关；`autoPublish` 只允许 AI/定时自主发布，手动明确发布仍由空间能力与既有权限/策略控制。`headless` 是历史兼容字段，当前版本不读取、不改变行为；空间发布始终通过 NapCat。 |
 | `qzoneComments` | `enabled`、`dryRun`、`pollMinutes`、`activePollMinutes`、`activeWindowMinutes`、`pollJitterPercent`、`cookieRefreshMinutes`、`ownTrackHours`、`externalTrackHours`、`onlyFriends`、`allowedUsers`、`blockedUsers`、`maxRepliesPerCycle`、`maxRepliesPerHour`、`delayMinSeconds`、`delayMaxSeconds`、`maxReplyChars`、`aiDecide`、`nestedReplyFallback`、`replyPrompt` | 空间评论回复。默认关闭且 dryRun；需要同时启用 `qzone.enabled`、未暂停、`policy.autoActions` 未关闭，关闭 dryRun 后还需要 AI Key；演示模式会跳过。QZone 无推送，只能自适应轮询；跟踪时长和回复上限的 0 表示不限。通过 NapCat `get_cookies` 获取空间登录态，Cookie 只在内存使用。`nestedReplyFallback` 默认 `false`，楼中楼直发失败时不回退到线程末尾。 |
@@ -211,7 +211,7 @@ npm test
 | `webSearch` | `enabled`、`searchEnabled`、`fetchEnabled`、`apiKey`、`maxResults`、`maxContentChars`、`maxCallsPerTurn` | 仅支持 DeepSeek 的联网搜索/抓取。`enabled` 是总开关，Search/Fetch 可独立关闭；`apiKey` 留空复用 `ai.apiKey`；默认每轮最多 4 次联网，结果 5 条，正文 6000 字。 |
 | `maxToolCallsPerTurn` | 数字 | 每轮最多工具调用次数，默认 `6`，范围 `1..10`；联网调用上限不会超过它。 |
 | `inputDelayMs` | 数字 | 输入前延迟，默认 `2000` 毫秒，范围 `1..10000`；收到消息后先等待再合并处理。独立于 `replyDelay`，在 Web 设置页保存后热更新后续批次，无需重启。 |
-| `groupChat` | `enabled`、`allowUnprompted`、`activityLevel`、`quietHours`、`timezone`、`proactiveWaitBaseMs`、`activityWindowSeconds`、`continuationWindowMinutes`、`budgetPerHour`、`continuationBudgetPerHour`、`totalBudgetPerHour`、`historySearchHours`、`cooldownMinutes`、`maxConsecutiveMessages`、`noResponseMinutes`、`sceneMessages`、`sceneWindowMinutes` | 群聊自然参与，Web 主设置是启用、允许未 @ 接话和 `low` / `medium` / `high` 积极度。`defaultMode/modes` 保留为旧配置兼容字段，不代替当前 Web 选项。主动等待以 `proactiveWaitBaseMs` 为基础，按 `activityWindowSeconds` 内消息数和发言人数调整，不使用群总人数公式。每小时默认预算为普通主动 6、续聊 12、总主动 18，范围 0..60，0 表示不限；明确 @、当前 `persona.name` 或引用 bot 不占这组主动/续聊预算。`historySearchHours` 默认 24，范围 1..168，只控制群聊 recall 的历史搜索窗口，私聊固定 7 天。 |
+| `groupChat` | `enabled`、`allowUnprompted`、`activityLevel`、`quietHours`、`timezone`、`proactiveWaitBaseMs`、`activityWindowSeconds`、`continuationWindowMinutes`、`budgetPerHour`、`continuationBudgetPerHour`、`totalBudgetPerHour`、`historySearchHours`、`cooldownSeconds`、`maxConsecutiveMessages`、`noResponseMinutes`、`sceneMessages`、`sceneWindowMinutes` | 群聊自然参与，Web 主设置是启用、允许未 @ 接话和 `low` / `medium` / `high` 积极度。`defaultMode/modes` 保留为旧配置兼容字段，不代替当前 Web 选项。主动等待以 `proactiveWaitBaseMs` 为基础，按 `activityWindowSeconds` 内消息数和发言人数调整，不使用群总人数公式。每小时默认预算为普通主动 6、续聊 12、总主动 18，范围 0..60，0 表示不限；明确 @、当前 `persona.name` 或引用 bot 不占这组主动/续聊预算。普通发言冷却默认 240 秒，范围 1..86400 秒；旧 `cooldownMinutes` 会按分钟换算。`historySearchHours` 默认 24，范围 1..168，只控制群聊 recall 的历史搜索窗口，私聊固定 7 天。 |
 | `replyDelay` | `enabled`、`typingIndicator`、`baseMs`、`msPerChar`、`maxMs`、`jitter` | QQ/OneBot 打字延迟与 OneBot 私聊“正在输入”。默认基础 500ms、每字 120ms、不设上限、±15% 抖动；`maxMs: 0` 表示不限；`typingIndicator` 默认开启。`enabled: false` 同时关闭分段与段间停顿。 |
 | `chatExit` | `enabled`、`idleMinutes`、`minConfidence`、`judgeModel`、`judgeTimeoutMs` | 私聊主动结束判断。默认启用，置信度 ≥ 0.75；`idleMinutes` 默认 10 分钟无回复标记终止；仅 QQ/OneBot 私聊。 |
 | `followUp` | `enabled`、`minMinutes`、`maxMinutes`、`quietHours`、`timezone`、`retryDelayMinutes` | 终止后的主动回访。默认 AI 在 5–1440 分钟内选时机，23–8 点顺延，失败按 5 分钟重试。 |
@@ -502,7 +502,7 @@ Alice 不读取 QQ 登录 Cookie，不接管验证码，也不提供规避风控
 - 定时空间在 `data/autonomy.json` 记录 `nextAt`；网页“定时空间”显示下一次时间。
 - 启动时自检：如果 `nextAt` 已过期，立即补发 1 条，不按错过次数重复补发；随后把 `nextAt` 设为当前时间 + 间隔。
 - 启动补发忽略安静时段；正常运行中的定时落在 23–8 点仍顺延，重启也不会把顺延误判成补发。
-- 定时内容生成会读取南京当前天气、气温、体感、湿度和风速，以及当前时间和时段；提示词要求自然融入，不机械打印时间或逐项播报天气。
+- 定时内容生成默认读取南京当前天气、气温、体感、湿度和风速，以及当前时间和时段；提示词要求自然融入，不机械打印时间或逐项播报天气。Web 可分别关闭天气或时间背景；关闭天气时不会发起天气请求，关闭时间时调度和安静时段仍正常工作。
 - 天气来自 Open-Meteo，无需 API Key；获取失败时仍然发布，只使用时间背景，不编造天气。
 - 如果出现 `Client network socket disconnected before secure TLS connection was established`，先关闭 VPN/代理或把 `*.qzone.qq.com` 配置为直连。
 

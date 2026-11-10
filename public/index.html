@@ -775,8 +775,8 @@
                     <input id="groupChatHistorySearchHours" name="groupChatHistorySearchHours" type="number" min="1" max="168" step="1" inputmode="numeric">
                   </label>
                   <label class="field">
-                    <span>普通发言冷却（分钟）</span>
-                    <input id="groupChatCooldownMinutes" name="groupChatCooldownMinutes" type="number" min="1" max="1440" step="1" inputmode="numeric">
+                    <span>普通发言冷却（秒）</span>
+                    <input id="groupChatCooldownSeconds" name="groupChatCooldownSeconds" type="number" min="1" max="86400" step="1" inputmode="numeric">
                   </label>
                 </div>
                 <p class="field-note">默认每小时预算为：普通主动 6、续聊 12、总主动 18；填 0 表示不限，明确 @、叫名字和引用 bot 不占用这组主动/续聊预算。群回忆历史搜索窗口仅用于群聊 recall，默认 24 小时；私聊回忆固定搜索最近 7 天。</p>
@@ -1200,6 +1200,26 @@
                   <label class="field field-wide">
                     <span>提示词</span>
                     <textarea id="autonomyPrompt" name="autonomyPrompt" rows="4" placeholder="用于生成空间内容的提示"></textarea>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="autonomyIncludeWeather">
+                    <span>
+                      <strong>注入南京天气</strong>
+                      <small>关闭后不请求天气，也不向生成内容提供天气背景</small>
+                    </span>
+                    <span class="switch">
+                      <input id="autonomyIncludeWeather" name="autonomyIncludeWeather" type="checkbox" aria-label="定时空间注入南京天气">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
+                  </label>
+                  <label class="toggle-field compact-toggle" for="autonomyIncludeTime">
+                    <span>
+                      <strong>注入时间信息</strong>
+                      <small>关闭后仍按计划调度，但不向生成内容提供日期、星期和时段</small>
+                    </span>
+                    <span class="switch">
+                      <input id="autonomyIncludeTime" name="autonomyIncludeTime" type="checkbox" aria-label="定时空间注入时间信息">
+                      <span class="switch-track" aria-hidden="true"></span>
+                    </span>
                   </label>
                   <label class="field">
                     <span>安静时段开始（0–23）</span>

@@ -98,10 +98,19 @@ export function formatLocalContext(date, timeZone = NANJING.timezone) {
   }
 }
 
-export function buildEnvironmentContext({ weather, now = new Date(), timeZone = NANJING.timezone } = {}) {
-  const local = formatLocalContext(now, timeZone);
-  const lines = [`当前时间：${local.time}（${local.weekday}，${local.dayPart}）`];
-  if (weather) {
+export function buildEnvironmentContext({
+  weather,
+  now = new Date(),
+  timeZone = NANJING.timezone,
+  includeWeather = true,
+  includeTime = true,
+} = {}) {
+  const lines = [];
+  if (includeTime) {
+    const local = formatLocalContext(now, timeZone);
+    lines.push(`当前时间：${local.time}（${local.weekday}，${local.dayPart}）`);
+  }
+  if (includeWeather && weather) {
     const details = [
       `${weather.description}，气温 ${weather.temperature}°C`,
       `体感 ${weather.apparentTemperature}°C`,
@@ -109,7 +118,7 @@ export function buildEnvironmentContext({ weather, now = new Date(), timeZone = 
     if (Number.isFinite(weather.humidity)) details.push(`湿度 ${weather.humidity}%`);
     if (Number.isFinite(weather.windSpeed)) details.push(`风速 ${weather.windSpeed} km/h`);
     lines.push(`南京当前天气：${details.join("，")}`);
-  } else {
+  } else if (includeWeather) {
     lines.push("南京当前天气：暂时获取失败（不要编造天气）");
   }
   return lines.join("\n");
